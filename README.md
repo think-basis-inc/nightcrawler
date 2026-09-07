@@ -68,6 +68,24 @@ Add the Copilot PAT:
 security add-generic-password -s "nightcrawler.github.copilot" -a "token" -w "ghp_..."
 ```
 
+## Demo mode
+
+To see the HUD without connecting any credentials, open the menu bar item and choose **Demo mode**, or launch from the terminal:
+
+```bash
+NIGHTCRAWLER_DEMO=1 open /Applications/NightCrawler.app
+```
+
+## What works now
+
+- Floating edge HUD with provider icons and colored usage rings
+- Hover for a quick percentage / used / limit / reset summary
+- Click an icon for the full per-provider window breakdown
+- Menu bar controls: move the HUD edge, refresh, demo mode, launch at login, settings, quit
+- Per-provider visibility toggles in Settings
+- Position and edge persistence across launches
+- Reads local credentials from each AI tool; no sign-in or token storage inside the app
+
 ## License
 
 MIT. Provider names and marks belong to their respective owners.

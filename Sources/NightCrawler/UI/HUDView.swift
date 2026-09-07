@@ -2,12 +2,16 @@ import SwiftUI
 
 struct HUDView: View {
     @EnvironmentObject var store: UsageStore
+    var onSelect: ((UsageReading) -> Void)?
 
     var body: some View {
         ScrollView {
             VStack(spacing: 10) {
                 ForEach(store.readings) { reading in
                     ProviderIcon(reading: reading)
+                        .onTapGesture {
+                            onSelect?(reading)
+                        }
                 }
             }
             .padding(10)

@@ -3,7 +3,7 @@ import Foundation
 
 @MainActor
 final class UsageStore: ObservableObject {
-    @Published private(set) var readings: [UsageReading] = []
+    @Published var readings: [UsageReading] = []
     @Published var enabledProviderIds: Set<String> = [
         "claude", "codex", "cursor", "copilot", "grok", "gemini", "opencode", "antigravity", "zcode"
     ]
