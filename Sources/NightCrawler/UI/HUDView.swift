@@ -3,24 +3,37 @@ import SwiftUI
 struct HUDView: View {
     @EnvironmentObject var store: UsageStore
     var onSelect: ((UsageReading) -> Void)?
+    var onSettings: (() -> Void)?
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: Design.px(83.5)) {
-                ForEach(store.readings) { reading in
-                    ProviderIcon(reading: reading)
-                        .onTapGesture {
-                            onSelect?(reading)
-                        }
+        VStack(spacing: 0) {
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: Design.px(83.5)) {
+                    ForEach(store.readings) { reading in
+                        ProviderIcon(reading: reading)
+                            .onTapGesture {
+                                onSelect?(reading)
+                            }
+                    }
                 }
+                .padding(.top, Design.px(69.5))
+                .padding(.bottom, Design.px(50.1))
+                .padding(.horizontal, 10)
             }
-            .padding(.top, Design.px(69.5))
-            .padding(.bottom, Design.px(50.1))
-            .padding(.horizontal, 10)
+
+            Button(action: { onSettings?() }) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: Design.fontSize(capPixels: 32)))
+                    .foregroundStyle(Palette.textSecondary)
+                    .frame(width: Design.px(56), height: Design.px(56))
+                    .background(Circle().fill(Palette.ringTrack))
+            }
+            .buttonStyle(.borderless)
+            .padding(.bottom, Design.px(24))
         }
         .frame(width: Design.px(186))
         .background(
-            RoundedRectangle(cornerRadius: Design.px(186) / 2, style: .continuous)
+            TabPillShape(cornerRadius: Design.px(186) / 2, notchSize: CGSize(width: 12, height: 24))
                 .fill(Palette.notch)
         )
     }
@@ -40,7 +53,7 @@ struct ProviderIcon: View {
                     .stroke(Palette.ringTrack, lineWidth: Design.px(15.5))
                     .frame(width: Design.px(117), height: Design.px(117))
 
-                if let window {
+                if reading.status == .live, let window {
                     Circle()
                         .inset(by: Design.px(15.5) / 2)
                         .trim(from: 0, to: CGFloat(min(max(window.fraction, 0), 1)))
@@ -60,12 +73,18 @@ struct ProviderIcon: View {
                         .font(.system(size: Design.fontSize(capPixels: 46), weight: .bold))
                         .foregroundStyle(Palette.textPrimary)
                 }
+
+                if reading.status.isError {
+                    Circle()
+                        .stroke(Palette.textSecondary, lineWidth: Design.px(8))
+                        .frame(width: Design.px(117), height: Design.px(117))
+                }
             }
             .frame(width: Design.px(117), height: Design.px(117))
 
             Text(percentageText)
                 .font(Typography.percent)
-                .foregroundStyle(Palette.textPrimary)
+                .foregroundStyle(reading.status.isError ? Palette.textSecondary : Palette.textPrimary)
                 .fixedSize(horizontal: true, vertical: false)
                 .frame(height: Design.px(27))
         }
@@ -140,5 +159,30 @@ extension ProviderGlyph {
         case "zcode": return .glm
         default: return nil
         }
+    }
+}
+
+struct TabPillShape: Shape {
+    var cornerRadius: CGFloat
+    var notchSize: CGSize
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.addRoundedRect(
+            in: rect,
+            cornerSize: CGSize(width: cornerRadius, height: cornerRadius),
+            style: .continuous
+        )
+
+        let y = rect.midY
+        let halfHeight = notchSize.height / 2
+        var tab = Path()
+        tab.move(to: CGPoint(x: rect.minX, y: y - halfHeight))
+        tab.addLine(to: CGPoint(x: rect.minX - notchSize.width, y: y))
+        tab.addLine(to: CGPoint(x: rect.minX, y: y + halfHeight))
+        tab.closeSubpath()
+
+        path.addPath(tab)
+        return path
     }
 }

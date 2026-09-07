@@ -11,7 +11,7 @@ enum DemoData {
                 authMode: "subscription",
                 source: "demo",
                 windows: [
-                    UsageWindow(id: "session", label: "Current session", used: 2500, limit: 10000, usedPercent: 25, windowMinutes: 300, resetsAt: now.addingTimeInterval(3600)),
+                    UsageWindow(id: "fable", label: "Fable", used: 2500, limit: 10000, usedPercent: 25, windowMinutes: 300, resetsAt: now.addingTimeInterval(3600)),
                     UsageWindow(id: "weekly_all", label: "All models", used: 7200, limit: 10000, usedPercent: 72, windowMinutes: 10080, resetsAt: now.addingTimeInterval(4 * 86400))
                 ],
                 status: .live,

@@ -12,9 +12,7 @@ struct GitHubCopilotUsageProvider: UsageProvider {
     private static let keychainAccount = "token"
 
     var isAvailable: Bool {
-        // Disabled by default to avoid keychain prompts. Enable in Settings once
-        // you have added the GitHub PAT and are ready to grant access.
-        false
+        getToken() != nil
     }
 
     func read() async -> UsageReading {

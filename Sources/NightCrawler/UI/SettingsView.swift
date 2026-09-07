@@ -31,10 +31,8 @@ struct SettingsView: View {
         Binding(
             get: { store.enabledProviderIds.contains(id) },
             set: { isOn in
-                if isOn {
-                    store.enabledProviderIds.insert(id)
-                } else {
-                    store.enabledProviderIds.remove(id)
+                if store.enabledProviderIds.contains(id) != isOn {
+                    store.toggle(providerId: id)
                 }
             }
         )

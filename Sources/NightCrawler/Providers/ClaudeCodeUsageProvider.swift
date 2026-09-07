@@ -9,9 +9,7 @@ struct ClaudeCodeUsageProvider: UsageProvider {
     private static let keychainService = "Claude Code-credentials"
 
     var isAvailable: Bool {
-        // Disabled by default to avoid keychain prompts. Enable in Settings once
-        // you are ready to grant access to Claude Code's stored credential.
-        false
+        readCredentials() != nil
     }
 
     func read() async -> UsageReading {

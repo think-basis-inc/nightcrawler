@@ -17,9 +17,7 @@ struct AntigravityUsageProvider: UsageProvider {
     private static let quotaEndpoint = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")!
 
     var isAvailable: Bool {
-        // Disabled by default to avoid keychain prompts. Enable in Settings once
-        // you are ready to grant access to Antigravity's stored credential.
-        false
+        loadCredentials() != nil
     }
 
     func read() async -> UsageReading {

@@ -5,6 +5,7 @@ import SwiftUI
 final class FloatingHUDController {
     private var panel: NSPanel?
     private var detailPanel: NSPanel?
+    private var settingsWindow: NSWindow?
     private let store: UsageStore
 
     private let defaultsEdgeKey = "hudEdge"
@@ -19,9 +20,17 @@ final class FloatingHUDController {
     func show() {
         guard panel == nil else { return }
 
-        let content = HUDView(onSelect: { [weak self] reading in
-            self?.showDetail(for: reading)
-        }).environmentObject(store)
+        let content = HUDView(
+            onSelect: { [weak self] reading in
+                if reading.status.isError {
+                    Task { await self?.store.refresh(providerId: reading.providerId) }
+                }
+                self?.showDetail(for: reading)
+            },
+            onSettings: { [weak self] in
+                self?.showSettings()
+            }
+        ).environmentObject(store)
         let hosting = NSHostingController(rootView: content)
         hosting.preferredContentSize = NSSize(width: pillWidth, height: 400)
 
@@ -54,6 +63,8 @@ final class FloatingHUDController {
     func hide() {
         detailPanel?.close()
         detailPanel = nil
+        settingsWindow?.close()
+        settingsWindow = nil
         if let frame = panel?.frame {
             saveFrame(frame)
         }
@@ -76,6 +87,21 @@ final class FloatingHUDController {
         let all: [ScreenEdge] = [.right, .left, .top, .bottom]
         guard let index = all.firstIndex(of: edge) else { return }
         edge = all[(index + 1) % all.count]
+    }
+
+    func showSettings() {
+        settingsWindow?.close()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 400),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "NightCrawler Settings"
+        window.contentViewController = NSHostingController(rootView: SettingsView().environmentObject(store))
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        settingsWindow = window
     }
 
     private func showDetail(for reading: UsageReading) {
