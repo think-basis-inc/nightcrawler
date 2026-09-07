@@ -2,7 +2,7 @@
 
 A tiny, native macOS HUD that sits on the edge of your screen and shows how much of each AI-coding subscription you’ve burned. It reads credentials each tool already stores locally, so there’s no sign-in, no Electron, no telemetry.
 
-Built for people who run multiple agents (Claude Code, Codex, Cursor, GitHub Copilot, Grok, Gemini, OpenCode, Antigravity, ZCode / GLM) and want one honest glance at their remaining headroom.
+Built for people who run multiple agents (Claude Code, Codex, Cursor, GitHub Copilot, Grok, OpenCode, Antigravity, ZCode / GLM) and want one honest glance at their remaining headroom.
 
 ## Look
 
@@ -47,15 +47,26 @@ Install to `/Applications`:
 ./scripts/install.sh
 ```
 
-## Copilot setup
+## Provider setup
 
-NightCrawler reads a GitHub Personal Access Token from the macOS Keychain:
+NightCrawler reads credentials the tools already store locally. Install and sign in to each tool, then NightCrawler will pick them up automatically.
+
+| Provider | What it reads |
+|---|---|
+| Claude Code | `Claude Code-credentials` item in the macOS Keychain |
+| Codex CLI | `~/.codex/auth.json` |
+| Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
+| GitHub Copilot | `nightcrawler.github.copilot` Keychain item (PAT with `Plan` read-only) |
+| Grok | `~/.grok/auth.json` |
+| OpenCode | `~/.local/share/opencode/auth.json` |
+| Antigravity | `gemini` / `antigravity` Keychain item |
+| ZCode / GLM | `~/.claude/settings.json`, `~/.zcode/v2/config.json`, or `~/.local/share/opencode/auth.json` |
+
+Add the Copilot PAT:
 
 ```bash
 security add-generic-password -s "nightcrawler.github.copilot" -a "token" -w "ghp_..."
 ```
-
-The token only needs **Account permissions → Plan → Read-only**.
 
 ## License
 

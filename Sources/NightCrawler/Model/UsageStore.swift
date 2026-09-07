@@ -4,9 +4,11 @@ import Foundation
 @MainActor
 final class UsageStore: ObservableObject {
     @Published private(set) var readings: [UsageReading] = []
-    @Published var enabledProviderIds: Set<String> = ["claude", "codex", "copilot"]
+    @Published var enabledProviderIds: Set<String> = [
+        "claude", "codex", "cursor", "copilot", "grok", "gemini", "opencode", "antigravity", "zcode"
+    ]
 
-    private var providers: [UsageProvider] = []
+    private let providers: [UsageProvider]
     private var timer: Timer?
 
     init(providers: [UsageProvider] = UsageStore.defaultProviders()) {
@@ -30,31 +32,31 @@ final class UsageStore: ObservableObject {
     }
 
     private func poll() async {
-        var next: [UsageReading] = []
-        for provider in providers where enabledProviderIds.contains(provider.id) {
-            do {
-                if let reading = try await provider.read() {
-                    next.append(reading)
-                }
-            } catch {
-                next.append(UsageReading(
-                    providerId: provider.id,
-                    label: provider.label,
-                    percentUsed: 0,
-                    used: 0,
-                    limit: 0,
-                    windowName: "",
-                    resetsAt: nil,
-                    status: .error(error.localizedDescription)
-                ))
+        let enabled = providers.filter { enabledProviderIds.contains($0.id) && $0.isAvailable }
+        let next = await withTaskGroup(of: UsageReading.self) { group in
+            for provider in enabled {
+                group.addTask { await provider.read() }
             }
+            var collected: [UsageReading] = []
+            for await reading in group {
+                collected.append(reading)
+            }
+            return collected
         }
-        readings = next
+        readings = next.sorted { $0.label < $1.label }
     }
 
     static func defaultProviders() -> [UsageProvider] {
         [
-            GitHubCopilotUsageProvider()
+            ClaudeCodeUsageProvider(),
+            CodexCLIUsageProvider(),
+            CursorUsageProvider(),
+            GitHubCopilotUsageProvider(),
+            GrokUsageProvider(),
+            GeminiUsageProvider(),
+            OpenCodeUsageProvider(),
+            AntigravityUsageProvider(),
+            ZCodeUsageProvider(),
         ]
     }
 }

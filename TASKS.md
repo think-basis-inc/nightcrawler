@@ -10,24 +10,25 @@ A tiny macOS HUD that floats on the screen edge and reports AI-coding subscripti
 - [x] Provider icons with colored usage rings
 - [x] Hover tooltip with usage percentage and limits
 - [x] `UsageProvider` protocol + `UsageStore`
-- [x] Example `GitHubCopilotUsageProvider` (reads PAT from Keychain)
 - [x] Build + install scripts
 
-## Phase 1 — click-to-pop-out detail panel
+## Phase 1 — providers (done)
+
+- [x] Claude Code provider (Keychain → Anthropic usage endpoint)
+- [x] Codex CLI provider (`~/.codex/auth.json` → ChatGPT usage endpoint)
+- [x] Cursor provider (SQLite global state → cursor.com usage summary)
+- [x] GitHub Copilot provider (Keychain PAT → GitHub billing API)
+- [x] Grok provider (`~/.grok/auth.json` → Grok CLI billing endpoint)
+- [x] OpenCode provider (`~/.local/share/opencode/auth.json`)
+- [x] Antigravity provider (Keychain → Google Cloud Code backend)
+- [x] ZCode / GLM provider (multi-source credential discovery)
+- [x] Provider availability detection: only show providers whose local credentials exist
+
+## Phase 2 — click-to-pop-out detail panel
 
 - [ ] Click an icon to open a compact detail popover/panel
 - [ ] Show per-provider windows: session / daily / weekly / monthly limits
 - [ ] Reset countdown and limit breakdown
-
-## Phase 2 — core providers (read local credentials, call official APIs)
-
-- [ ] Claude Code provider (OAuth token from Keychain → Anthropic usage endpoint)
-- [ ] Codex CLI provider (local Codex session → OpenAI usage endpoint)
-- [ ] Cursor provider (local SQLite/session → Cursor usage endpoint)
-- [ ] Grok provider (`~/.grok/auth.json` → Grok credits endpoint)
-- [ ] OpenCode provider (`opencode-go` key → OpenCode plan endpoint)
-- [ ] Antigravity / GLM / ZCode providers
-- [ ] Provider availability detection: hide providers with no local credentials
 
 ## Phase 3 — placement and behavior
 

@@ -1,25 +1,23 @@
 import Foundation
 
-struct UsageReading: Identifiable, Equatable {
+struct UsageReading: Identifiable, Equatable, Sendable {
     let id = UUID()
     let providerId: String
     let label: String
-    let percentUsed: Double
-    let used: Int
-    let limit: Int
-    let windowName: String
-    let resetsAt: Date?
+    let accountId: String?
+    let authMode: String
+    let source: String
+    let windows: [UsageWindow]
     let status: ReadingStatus
+    let observedAt: Date?
+    let error: String?
 
-    var fraction: Double {
-        guard limit > 0 else { return 0 }
-        return min(max(Double(used) / Double(limit), 0), 1)
+    var headlineWindow: UsageWindow? {
+        windows.max { $0.fraction < $1.fraction }
     }
 
-    enum ReadingStatus: Equatable {
-        case ok
-        case warning
-        case critical
+    enum ReadingStatus: Equatable, Sendable {
+        case live
         case needsAuth
         case error(String)
     }

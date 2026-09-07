@@ -28,13 +28,15 @@ struct ProviderIcon: View {
     let reading: UsageReading
     @State private var isHovered = false
 
+    private var window: UsageWindow? { reading.headlineWindow }
+
     var body: some View {
         ZStack {
             Circle()
                 .fill(Color.black.opacity(0.25))
                 .frame(width: 38, height: 38)
 
-            RingView(fraction: reading.status.isError ? 0 : reading.fraction, color: statusColor)
+            RingView(fraction: reading.status.isError ? 0 : (window?.fraction ?? 0), color: statusColor)
                 .frame(width: 38, height: 38)
 
             Text(initials)
@@ -58,17 +60,26 @@ struct ProviderIcon: View {
 
     private var statusColor: Color {
         switch reading.status {
-        case .ok: return .green
-        case .warning: return .orange
-        case .critical: return .red
+        case .live:
+            guard let window else { return .gray }
+            switch window.status {
+            case .ok: return .green
+            case .warning: return .orange
+            case .critical: return .red
+            }
         case .needsAuth, .error: return .gray
         }
     }
 
     private var helpText: String {
-        if reading.status.isError {
-            return "\(reading.label): \(reading.status == .needsAuth ? "sign in required" : "error")"
+        switch reading.status {
+        case .needsAuth:
+            return "\(reading.label): sign in required"
+        case .error(let error):
+            return "\(reading.label): \(error)"
+        case .live:
+            guard let window else { return "\(reading.label): no reading" }
+            return "\(reading.label): \(Int(window.usedPercent))% of \(window.limit) \(window.label)"
         }
-        return "\(reading.label): \(Int(reading.percentUsed))% of \(reading.limit)"
     }
 }

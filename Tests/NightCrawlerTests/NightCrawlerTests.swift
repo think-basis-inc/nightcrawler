@@ -2,16 +2,25 @@ import Testing
 @testable import NightCrawler
 
 @Test
-func readingFractionIsClamped() {
-    let r = UsageReading(
-        providerId: "x",
+func windowFractionIsClamped() {
+    let w = UsageWindow(
+        id: "x",
         label: "X",
-        percentUsed: 150,
         used: 3,
         limit: 2,
-        windowName: "w",
-        resetsAt: nil,
-        status: .ok
+        usedPercent: 150,
+        windowMinutes: nil,
+        resetsAt: nil
     )
-    #expect(r.fraction == 1.0)
+    #expect(w.fraction == 1.0)
+}
+
+@Test
+func windowStatusFromFraction() {
+    let ok = UsageWindow(id: "a", label: "A", used: 30, limit: 100, usedPercent: 30, windowMinutes: nil, resetsAt: nil)
+    let warning = UsageWindow(id: "b", label: "B", used: 75, limit: 100, usedPercent: 75, windowMinutes: nil, resetsAt: nil)
+    let critical = UsageWindow(id: "c", label: "C", used: 95, limit: 100, usedPercent: 95, windowMinutes: nil, resetsAt: nil)
+    #expect(ok.status == .ok)
+    #expect(warning.status == .warning)
+    #expect(critical.status == .critical)
 }
