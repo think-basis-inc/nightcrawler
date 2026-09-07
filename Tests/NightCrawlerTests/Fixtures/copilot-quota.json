@@ -1,0 +1,28 @@
+{
+  "quotaSnapshots": {
+    "chat": {
+      "entitlementRequests": 0,
+      "usedRequests": 0,
+      "remainingPercentage": 100,
+      "overage": 0,
+      "overageAllowedWithExhaustedQuota": false,
+      "resetDate": "2026-09-06T10:04:14.551-07:00"
+    },
+    "completions": {
+      "entitlementRequests": 0,
+      "usedRequests": 0,
+      "remainingPercentage": 100,
+      "overage": 0,
+      "overageAllowedWithExhaustedQuota": false,
+      "resetDate": "2026-09-06T10:04:14.551-07:00"
+    },
+    "premium_interactions": {
+      "entitlementRequests": 0,
+      "usedRequests": 0,
+      "remainingPercentage": 100,
+      "overage": 0,
+      "overageAllowedWithExhaustedQuota": true,
+      "resetDate": "2026-09-06T10:04:14.551-07:00"
+    }
+  }
+}

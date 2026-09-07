@@ -10,6 +10,7 @@ rm -rf "$APP_DIR"
 
 mkdir -p "$APP_DIR/Contents/MacOS"
 cp .build/release/NightCrawler "$APP_DIR/Contents/MacOS/NightCrawler"
+cp -R .build/release/NightCrawler_NightCrawler.bundle "$APP_DIR/NightCrawler_NightCrawler.bundle"
 
 cat > "$APP_DIR/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>

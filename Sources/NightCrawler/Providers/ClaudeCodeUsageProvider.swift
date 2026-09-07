@@ -6,16 +6,22 @@ struct ClaudeCodeUsageProvider: UsageProvider {
     let id = "claude"
     let label = "Claude Code"
 
-    private static let keychainService = "Claude Code-credentials"
+    private let credentials: ClaudeCredentialStore
 
-    var isAvailable: Bool {
-        readCredentials() != nil
+    init(credentials: ClaudeCredentialStore = .shared) {
+        self.credentials = credentials
     }
 
+    var isAvailable: Bool { true }
+
     func read() async -> UsageReading {
-        guard let credentials = readCredentials() else {
+        guard let token = await credentials.read() else {
             return makeReading(status: .needsAuth, error: "Sign in to Claude Code to refresh its subscription login")
         }
+        let credentials = Credentials(
+            accessToken: token,
+            accountId: ProviderHelpers.sha256Prefix(token)
+        )
 
         var request = URLRequest(
             url: URL(string: "https://api.anthropic.com/api/oauth/usage")!,
@@ -62,23 +68,6 @@ struct ClaudeCodeUsageProvider: UsageProvider {
         } catch {
             return makeReading(status: .error("Claude usage request failed"))
         }
-    }
-
-    private func readCredentials() -> Credentials? {
-        guard let data = Keychain.readGenericPassword(service: Self.keychainService),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let oauth = root["claudeAiOauth"] as? [String: Any],
-              let token = oauth["accessToken"] as? String, !token.isEmpty,
-              let expiresMs = oauth["expiresAt"] as? Double
-        else { return nil }
-
-        let expiresAt = Date(timeIntervalSince1970: expiresMs / 1000)
-        guard expiresAt > Date() else { return nil }
-
-        return Credentials(
-            accessToken: token,
-            accountId: ProviderHelpers.sha256Prefix(token)
-        )
     }
 
     private func makeReading(status: UsageReading.ReadingStatus, error: String? = nil) -> UsageReading {
@@ -173,13 +162,7 @@ struct ClaudeCodeUsageProvider: UsageProvider {
         }
 
         private func label(for kind: String) -> String {
-            switch kind {
-            case "session": return "Current session"
-            case "weekly_all": return "All models"
-            case "weekly_opus": return "Opus weekly"
-            case "weekly_sonnet": return "Sonnet weekly"
-            default: return kind.replacingOccurrences(of: "_", with: " ").capitalized
-            }
+            ClaudeUsageLabels.label(for: kind)
         }
 
         private func windowMinutes(for kind: String) -> Int? {

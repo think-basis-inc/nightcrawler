@@ -18,8 +18,8 @@ func windowFractionIsClamped() {
 @Test
 func windowStatusFromFraction() {
     let ok = UsageWindow(id: "a", label: "A", used: 30, limit: 100, usedPercent: 30, windowMinutes: nil, resetsAt: nil)
-    let warning = UsageWindow(id: "b", label: "B", used: 75, limit: 100, usedPercent: 75, windowMinutes: nil, resetsAt: nil)
-    let critical = UsageWindow(id: "c", label: "C", used: 95, limit: 100, usedPercent: 95, windowMinutes: nil, resetsAt: nil)
+    let warning = UsageWindow(id: "b", label: "B", used: 60, limit: 100, usedPercent: 60, windowMinutes: nil, resetsAt: nil)
+    let critical = UsageWindow(id: "c", label: "C", used: 75, limit: 100, usedPercent: 75, windowMinutes: nil, resetsAt: nil)
     #expect(ok.status == .ok)
     #expect(warning.status == .warning)
     #expect(critical.status == .critical)

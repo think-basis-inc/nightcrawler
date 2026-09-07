@@ -5,8 +5,10 @@ struct NightCrawlerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        Settings {
-            SettingsView()
+        MenuBarExtra(isInserted: .constant(false)) {
+            EmptyView()
+        } label: {
+            EmptyView()
         }
     }
 }

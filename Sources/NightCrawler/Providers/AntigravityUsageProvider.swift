@@ -32,8 +32,11 @@ struct AntigravityUsageProvider: UsageProvider {
             let _ = try await post(url: Self.loadEndpoint, token: credentials.accessToken, body: ["metadata": ["pluginType": "GEMINI"]])
             let quota = try await post(url: Self.quotaEndpoint, token: credentials.accessToken, body: [:])
 
-            guard let data = quota,
-                  let windows = windows(from: data), !windows.isEmpty
+            guard let data = quota else {
+                return makeReading(status: .error("Antigravity returned no quota metadata"))
+            }
+            let windows = Self.windows(from: data)
+            guard !windows.isEmpty
             else {
                 return makeReading(status: .error("Antigravity does not publish a usage quota for this account"))
             }
@@ -82,37 +85,59 @@ struct AntigravityUsageProvider: UsageProvider {
         return data
     }
 
-    private func windows(from data: Data) -> [UsageWindow]? {
+    static func windows(from data: Data) -> [UsageWindow] {
         struct Response: Decodable {
             struct Bucket: Decodable {
                 let name: String?
+                let bucketId: String?
                 let displayName: String?
                 let used: Double?
                 let limit: Double?
+                let remainingFraction: Double?
                 let resetTime: String?
             }
             struct Group: Decodable {
                 let displayName: String?
                 let buckets: [Bucket]?
             }
+            struct Body: Decodable {
+                let groups: [Group]?
+            }
             let quotaGroups: [Group]?
             let buckets: [Bucket]?
+            let response: Body?
         }
 
-        guard let decoded = try? JSONDecoder().decode(Response.self, from: data) else { return nil }
-        let allBuckets = (decoded.quotaGroups?.flatMap { $0.buckets ?? [] } ?? []) + (decoded.buckets ?? [])
+        guard let decoded = try? JSONDecoder().decode(Response.self, from: data) else { return [] }
+        let grouped = (decoded.quotaGroups ?? []) + (decoded.response?.groups ?? [])
+        let allBuckets: [(Response.Bucket, String?)] = grouped.flatMap { group in
+            (group.buckets ?? []).map { ($0, group.displayName) }
+        } + (decoded.buckets ?? []).map { ($0, nil) }
 
-        return allBuckets.compactMap { bucket in
-            guard let limit = bucket.limit, limit > 0,
-                  let used = bucket.used, used >= 0
-            else { return nil }
-            let label = bucket.displayName ?? bucket.name ?? "Usage"
+        return allBuckets.compactMap { bucket, groupLabel in
+            let usedPercent: Double
+            if let remaining = bucket.remainingFraction,
+               remaining.isFinite,
+               (0...1).contains(remaining) {
+                usedPercent = (1 - remaining) * 100
+            } else if let limit = bucket.limit,
+                      limit.isFinite,
+                      limit > 0,
+                      let used = bucket.used,
+                      used.isFinite,
+                      used >= 0,
+                      used <= limit * 1.5 {
+                usedPercent = (used / limit) * 100
+            } else {
+                return nil
+            }
+            let label = groupLabel ?? bucket.displayName ?? bucket.name ?? "Usage"
             return UsageWindow(
-                id: bucket.name ?? label,
+                id: bucket.bucketId ?? bucket.name ?? label,
                 label: label,
-                used: Int(used),
-                limit: Int(limit),
-                usedPercent: (used / limit) * 100,
+                used: Int(usedPercent * 100),
+                limit: 10000,
+                usedPercent: usedPercent,
                 windowMinutes: nil,
                 resetsAt: ProviderHelpers.parseRFC3339(bucket.resetTime)
             )

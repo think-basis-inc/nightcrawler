@@ -16,9 +16,19 @@ struct UsageReading: Identifiable, Equatable, Sendable {
         windows.max { $0.fraction < $1.fraction }
     }
 
+    var outerRingWindow: UsageWindow? {
+        windows.first { $0.id == "weekly_all" } ?? headlineWindow
+    }
+
+    var innerRingWindow: UsageWindow? {
+        guard providerId == "claude" else { return nil }
+        return windows.first { $0.id == "weekly_scoped" || $0.id == "fable" }
+    }
+
     enum ReadingStatus: Equatable, Sendable {
         case live
         case needsAuth
+        case unknown
         case error(String)
     }
 }

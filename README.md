@@ -6,10 +6,10 @@ Built for people who run multiple agents (Claude Code, Codex, Cursor, GitHub Cop
 
 ## Look
 
-- A small, rounded tab floats on the right, left, top, or bottom edge of the screen.
-- Each enabled provider shows as an icon with a colored ring around it: green → amber → red.
-- Hover an icon for the percentage, used / limit, and reset time.
-- Click an icon to pop out the full data panel.
+- A black rail welds into the chosen screen edge (right, left, top, or bottom) with inverse rounded flares.
+- Each enabled provider shows the same compact percentage convention—always percent used—with a colored ring: green under 50%, yellow to 70%, orange to 100%, red when exhausted.
+- Claude shows two concentric arcs when both All models and Fable weekly windows exist.
+- Click an icon or the tucked settings handle to open an attached slideout joined to the rail by a pinched, curved liquid tendril rather than a popover pointer.
 
 ## Why not a fork of codenotch?
 
@@ -26,12 +26,12 @@ Sources/NightCrawler/
     UsageStore.swift         polls providers, publishes to UI
   Providers/
     UsageProvider.swift      protocol
-    GitHubCopilotUsageProvider.swift  example real provider
+    GitHubCopilotUsageProvider.swift  Copilot CLI metadata RPC
   UI/
-    HUDView.swift            floating edge tab with icon rings
-    RingView.swift           status-colored ring
-    SettingsView.swift       provider toggles
-    FloatingHUDController.swift  NSPanel positioning
+    HUDRootView.swift        welded rail plus attached slideout
+    HUDView.swift            provider rings
+    SettingsView.swift       custom provider picker
+    FloatingHUDController.swift  single NSPanel on the bezel
 ```
 
 ## Build
@@ -56,17 +56,11 @@ NightCrawler reads credentials the tools already store locally. Install and sign
 | Claude Code | `Claude Code-credentials` item in the macOS Keychain |
 | Codex CLI | `~/.codex/auth.json` |
 | Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
-| GitHub Copilot | `nightcrawler.github.copilot` Keychain item (PAT with `Plan` read-only) |
+| GitHub Copilot | Copilot CLI (`copilot --headless --stdio`); metadata-only `account.getQuota` |
 | Grok | `~/.grok/auth.json` |
 | OpenCode | `~/.local/share/opencode/auth.json` |
 | Antigravity | `gemini` / `antigravity` Keychain item |
 | ZCode / GLM | `~/.claude/settings.json`, `~/.zcode/v2/config.json`, or `~/.local/share/opencode/auth.json` |
-
-Add the Copilot PAT:
-
-```bash
-security add-generic-password -s "nightcrawler.github.copilot" -a "token" -w "ghp_..."
-```
 
 ## Demo mode
 
@@ -76,14 +70,26 @@ To see the HUD without connecting any credentials, open the menu bar item and ch
 NIGHTCRAWLER_DEMO=1 open /Applications/NightCrawler.app
 ```
 
+Demo mode is intentionally temporary and returns to live provider data on the next launch.
+
+## Local agent capacity endpoint
+
+While NightCrawler is running, local agents can read its cached routing snapshot without triggering a provider refresh:
+
+```bash
+curl http://127.0.0.1:17890/v1/capacity
+```
+
+`GET /health` is also available. The listener binds only to `127.0.0.1`, accepts no mutations, and never returns credentials or account identifiers. Each resource reports its persisted `enabled` state, `available` as `available`, `unavailable`, or `unknown`, and capacity windows with freshness and reset times. Tools without an authoritative quota source report unknown capacity. Devin and Cubic appear in the attached Agent routing settings; Cubic starts disabled and unavailable.
+
 ## What works now
 
-- Floating edge HUD with provider icons and colored usage rings
-- Hover for a quick percentage / used / limit / reset summary
-- Click an icon for the full per-provider window breakdown
+- Edge-welded HUD with provider icons and colored usage rings
+- Click an icon for the per-provider window breakdown in an attached slideout
 - Menu bar controls: move the HUD edge, refresh, demo mode, launch at login, settings, quit
-- Per-provider visibility toggles in Settings
-- Position and edge persistence across launches
+- Screen-edge selection plus per-provider visibility and ordering in the attached settings slideout
+- Provider order, visibility, routing-tool state, and edge preference persist across restarts
+- Loopback-only cached capacity endpoint for local agent routing decisions
 - Reads local credentials from each AI tool; no sign-in or token storage inside the app
 
 ## License

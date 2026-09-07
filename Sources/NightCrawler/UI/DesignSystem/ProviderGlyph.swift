@@ -13,10 +13,20 @@ enum ProviderGlyph: String, Codable, Equatable {
     case glm
     case grok
     case opencode
+    case devin
+    case cubic
 
     /// If an asset with this name is in the bundle it wins over the traced
     /// outline — drop a PDF/SVG export from Figma in and it is picked up.
     var assetName: String { "glyph-\(rawValue)" }
+
+    var bundledResourceURL: URL? {
+        Bundle.module.url(
+            forResource: assetName,
+            withExtension: "svg",
+            subdirectory: "ProviderGlyphs"
+        )
+    }
 
     /// How much to scale this mark so it reads the same size as the others.
     ///
@@ -38,6 +48,8 @@ enum ProviderGlyph: String, Codable, Equatable {
         case .glm:    return 0.95
         case .grok:   return 1.0
         case .opencode: return 0.95
+        case .devin: return 0.96
+        case .cubic: return 0.96
         case .third:  return 1.0
         }
     }
@@ -52,6 +64,7 @@ enum ProviderGlyph: String, Codable, Equatable {
         case .glm:    return GlyphOutline.glm
         case .grok:   return GlyphOutline.grok
         case .opencode: return GlyphOutline.opencode
+        case .devin, .cubic: return []
         }
     }
 }
@@ -83,7 +96,7 @@ struct ProviderGlyphView: View {
 
     var body: some View {
         Group {
-            if let image = NSImage(named: glyph.assetName) {
+            if let image = bundledImage {
                 Image(nsImage: image)
                     .renderingMode(.template)
                     .resizable()
@@ -98,5 +111,15 @@ struct ProviderGlyphView: View {
         // is evened out within it.
         .scaleEffect(glyph.opticalScale)
         .frame(width: size, height: size)
+    }
+
+    private var bundledImage: NSImage? {
+        if let image = NSImage(named: glyph.assetName) {
+            return image
+        }
+        guard let url = glyph.bundledResourceURL else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
     }
 }
