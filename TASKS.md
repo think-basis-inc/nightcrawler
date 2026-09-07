@@ -1,17 +1,25 @@
 # NightCrawler roadmap
 
-A tiny macOS subscription/usage reporter for AI coding agents. It reads credentials each tool already stores locally and shows remaining headroom in the menu bar or a floating edge panel.
+A tiny macOS HUD that floats on the screen edge and reports AI-coding subscription usage. It reads credentials each tool already stores locally and shows remaining headroom as icon rings.
 
 ## Phase 0 — skeleton (done)
 
 - [x] Create `think-basis-inc/nightcrawler` repo
 - [x] Swift Package Manager project with executable target
-- [x] Menu-bar app shell, popover, settings, ring view
+- [x] Floating edge HUD shell (rounded tab, always-on-top, positionable)
+- [x] Provider icons with colored usage rings
+- [x] Hover tooltip with usage percentage and limits
 - [x] `UsageProvider` protocol + `UsageStore`
 - [x] Example `GitHubCopilotUsageProvider` (reads PAT from Keychain)
 - [x] Build + install scripts
 
-## Phase 1 — core providers (read local credentials, call official APIs)
+## Phase 1 — click-to-pop-out detail panel
+
+- [ ] Click an icon to open a compact detail popover/panel
+- [ ] Show per-provider windows: session / daily / weekly / monthly limits
+- [ ] Reset countdown and limit breakdown
+
+## Phase 2 — core providers (read local credentials, call official APIs)
 
 - [ ] Claude Code provider (OAuth token from Keychain → Anthropic usage endpoint)
 - [ ] Codex CLI provider (local Codex session → OpenAI usage endpoint)
@@ -21,22 +29,13 @@ A tiny macOS subscription/usage reporter for AI coding agents. It reads credenti
 - [ ] Antigravity / GLM / ZCode providers
 - [ ] Provider availability detection: hide providers with no local credentials
 
-## Phase 2 — display options
+## Phase 3 — placement and behavior
 
-- [ ] Per-provider visibility toggles (Settings UI already started)
-- [ ] Choose surface: menu bar only, floating edge pill, or both
-- [ ] Choose pill edge: right, left, top, bottom
-- [ ] Compact vs expanded view
+- [ ] Choose edge: right, left, top, bottom (currently hard-coded right)
+- [ ] Remember HUD position across launches
+- [ ] Compact vs expanded icon sizes
 - [ ] Refresh cadence (idle vs active)
 - [ ] Launch at login
-
-## Phase 3 — richer reporting
-
-- [ ] Floating edge pill window with position persistence
-- [ ] Hover tooltip with reset time and limit window details
-- [ ] Multiple limit windows per provider (session / daily / weekly / monthly)
-- [ ] Threshold notifications at 70% / 90%
-- [ ] Menu-bar title mode: icon-only, total %, hottest provider
 
 ## Phase 4 — reliability and efficiency
 
