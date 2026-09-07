@@ -21,15 +21,15 @@ struct HUDView: View {
                 .padding(.horizontal, 10)
             }
 
-            Button(action: { onSettings?() }) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: Design.fontSize(capPixels: 32)))
-                    .foregroundStyle(Palette.textSecondary)
-                    .frame(width: Design.px(56), height: Design.px(56))
-                    .background(Circle().fill(Palette.ringTrack))
-            }
-            .buttonStyle(.borderless)
-            .padding(.bottom, Design.px(24))
+            Image(systemName: "gearshape")
+                .font(.system(size: Design.fontSize(capPixels: 32)))
+                .foregroundStyle(Palette.textSecondary)
+                .frame(width: Design.px(56), height: Design.px(56))
+                .background(Circle().fill(Palette.ringTrack))
+                .onTapGesture {
+                    onSettings?()
+                }
+                .padding(.bottom, Design.px(24))
         }
         .frame(width: Design.px(186))
         .background(

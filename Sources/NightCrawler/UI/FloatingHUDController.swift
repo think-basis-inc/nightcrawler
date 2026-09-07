@@ -90,7 +90,12 @@ final class FloatingHUDController {
     }
 
     func showSettings() {
-        settingsWindow?.close()
+        if let window = settingsWindow, window.isVisible {
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 320, height: 400),
             styleMask: [.titled, .closable, .miniaturizable],
@@ -100,8 +105,12 @@ final class FloatingHUDController {
         window.title = "NightCrawler Settings"
         window.contentViewController = NSHostingController(rootView: SettingsView().environmentObject(store))
         window.center()
-        window.makeKeyAndOrderFront(nil)
         settingsWindow = window
+
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+        }
     }
 
     private func showDetail(for reading: UsageReading) {
