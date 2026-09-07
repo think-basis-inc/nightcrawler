@@ -10,6 +10,8 @@ final class FloatingHUDController {
     private let defaultsEdgeKey = "hudEdge"
     private let defaultsFrameKey = "hudFrame"
 
+    private let pillWidth: CGFloat = Design.px(186)
+
     init(store: UsageStore) {
         self.store = store
     }
@@ -21,9 +23,10 @@ final class FloatingHUDController {
             self?.showDetail(for: reading)
         }).environmentObject(store)
         let hosting = NSHostingController(rootView: content)
+        hosting.preferredContentSize = NSSize(width: pillWidth, height: 400)
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 60, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: pillWidth, height: 400),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -82,6 +85,7 @@ final class FloatingHUDController {
             self?.detailPanel?.close()
             self?.detailPanel = nil
         })
+        hosting.preferredContentSize = NSSize(width: 260, height: 180)
 
         let detail = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 260, height: 180),
@@ -133,13 +137,13 @@ final class FloatingHUDController {
         let origin: NSPoint
         switch edge {
         case .right:
-            origin = NSPoint(x: frame.maxX - size.width - 8, y: frame.midY - size.height / 2)
+            origin = NSPoint(x: frame.maxX - pillWidth, y: frame.midY - size.height / 2)
         case .left:
-            origin = NSPoint(x: frame.minX + 8, y: frame.midY - size.height / 2)
+            origin = NSPoint(x: frame.minX, y: frame.midY - size.height / 2)
         case .top:
-            origin = NSPoint(x: frame.midX - size.width / 2, y: frame.maxY - size.height - 8)
+            origin = NSPoint(x: frame.midX - size.width / 2, y: frame.maxY - size.height)
         case .bottom:
-            origin = NSPoint(x: frame.midX - size.width / 2, y: frame.minY + 8)
+            origin = NSPoint(x: frame.midX - size.width / 2, y: frame.minY)
         }
         panel.setFrameOrigin(origin)
     }

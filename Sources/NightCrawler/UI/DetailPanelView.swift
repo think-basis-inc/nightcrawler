@@ -5,43 +5,50 @@ struct DetailPanelView: View {
     let onClose: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(reading.label)
-                    .font(.headline)
-                Spacer()
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: Design.px(17)) {
+                if let glyph = ProviderGlyph.from(providerId: reading.providerId) {
+                    ProviderGlyphView(glyph: glyph)
+                        .foregroundStyle(Palette.textPrimary)
+                }
+                Text("\(reading.label) Usage")
+                    .font(Typography.cardTitle)
+                    .foregroundStyle(Palette.textPrimary)
+                Spacer(minLength: 0)
                 Button(action: onClose) {
                     Image(systemName: "xmark")
-                        .font(.caption)
+                        .font(Typography.cardBody)
                 }
                 .buttonStyle(.borderless)
+                .foregroundStyle(Palette.textSecondary)
             }
 
             if reading.status.isError {
                 Text(statusMessage)
-                    .foregroundStyle(.secondary)
+                    .font(Typography.cardBody)
+                    .foregroundStyle(Palette.textSecondary)
+                    .padding(.top, Design.px(21))
             } else if reading.windows.isEmpty {
                 Text("No usage windows reported.")
-                    .foregroundStyle(.secondary)
+                    .font(Typography.cardBody)
+                    .foregroundStyle(Palette.textSecondary)
+                    .padding(.top, Design.px(21))
             } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(reading.windows) { window in
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(reading.windows.enumerated()), id: \.element.id) { index, window in
                         WindowRow(window: window)
+                            .padding(.top, index == 0 ? Design.px(21) : Design.px(20))
                     }
                 }
             }
-
-            if let observedAt = reading.observedAt {
-                HStack {
-                    Spacer()
-                    Text("Updated \(relativeTime(observedAt))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
-        .padding()
-        .frame(width: 260)
+        .padding(Design.px(32))
+        .frame(width: Design.px(600))
+        .background(
+            RoundedRectangle(cornerRadius: Design.px(49.5), style: .continuous)
+                .fill(Palette.card)
+        )
+        .foregroundStyle(Palette.textPrimary)
     }
 
     private var statusMessage: String {
@@ -54,48 +61,43 @@ struct DetailPanelView: View {
             return ""
         }
     }
-
-    private func relativeTime(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
 }
 
 struct WindowRow: View {
     let window: UsageWindow
 
-    var body: some View {
-        HStack(spacing: 12) {
-            RingView(fraction: window.fraction, color: statusColor)
-                .frame(width: 28, height: 28)
+    private var band: UsageBand { UsageBand.band(for: window.fraction) }
+    private var trackWidth: CGFloat { Design.px(600) - 2 * Design.px(32) }
+    private var fillWidth: CGFloat { max(Design.px(10.5), trackWidth * min(window.fraction, 1)) }
 
-            VStack(alignment: .leading, spacing: 2) {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: Design.px(20)) {
                 Text(window.label)
-                    .font(.system(size: 12, weight: .semibold))
-                Text("\(window.used) / \(window.limit)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if let resetsAt = window.resetsAt {
-                    Text("Resets \(relativeTime(resetsAt))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    .foregroundStyle(Palette.textPrimary)
+                Spacer(minLength: 0)
+                if let reset = window.resetsAt {
+                    Text(relativeTime(reset))
+                        .foregroundStyle(Palette.textSecondary)
                 }
             }
+            .font(Typography.cardBody)
+            .lineLimit(1)
 
-            Spacer()
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Palette.barTrack)
+                    .frame(width: trackWidth, height: Design.px(10.5))
+                Capsule()
+                    .fill(band.color)
+                    .frame(width: fillWidth, height: Design.px(10.5))
+            }
+            .padding(.top, Design.px(16.8))
 
-            Text("\(Int(window.usedPercent))%")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(statusColor)
-        }
-    }
-
-    private var statusColor: Color {
-        switch window.status {
-        case .ok: return .green
-        case .warning: return .orange
-        case .critical: return .red
+            Text("\(Int(window.usedPercent))% Used")
+                .font(Typography.cardBody)
+                .foregroundStyle(Palette.textPrimary)
+                .padding(.top, Design.px(17.8))
         }
     }
 

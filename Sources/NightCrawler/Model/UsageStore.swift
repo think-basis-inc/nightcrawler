@@ -15,8 +15,10 @@ final class UsageStore: ObservableObject {
         self.providers = providers
     }
 
-    func startPolling(interval: TimeInterval = 60) {
-        Task { await poll() }
+    func startPolling(interval: TimeInterval = 60, skipInitialPoll: Bool = false) {
+        if !skipInitialPoll {
+            Task { await poll() }
+        }
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { await self?.poll() }
         }

@@ -25,7 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = makeMenu()
         self.statusItem = statusItem
 
-        store.startPolling()
+        let isDemo = ProcessInfo.processInfo.environment["NIGHTCRAWLER_DEMO"] == "1" || DemoState.isEnabled
+        store.startPolling(skipInitialPoll: isDemo)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
