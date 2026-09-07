@@ -2,8 +2,14 @@ import SwiftUI
 
 struct HUDView: View {
     @EnvironmentObject var store: UsageStore
+    var selectedProviderId: String?
     var onSelect: ((UsageReading) -> Void)?
     var onSettings: (() -> Void)?
+
+    private var selectedIndex: Int? {
+        guard let id = selectedProviderId else { return nil }
+        return store.readings.firstIndex(where: { $0.providerId == id })
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,8 +39,12 @@ struct HUDView: View {
         }
         .frame(width: Design.px(186))
         .background(
-            TabPillShape(cornerRadius: Design.px(186) / 2, notchSize: CGSize(width: 12, height: 24))
-                .fill(Palette.notch)
+            HUDTabShape(
+                selectedIndex: selectedIndex,
+                cornerRadius: Design.px(186) / 2,
+                notchSize: CGSize(width: 12, height: 24)
+            )
+            .fill(Palette.notch, style: FillStyle(eoFill: true))
         )
     }
 }
@@ -159,30 +169,5 @@ extension ProviderGlyph {
         case "zcode": return .glm
         default: return nil
         }
-    }
-}
-
-struct TabPillShape: Shape {
-    var cornerRadius: CGFloat
-    var notchSize: CGSize
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.addRoundedRect(
-            in: rect,
-            cornerSize: CGSize(width: cornerRadius, height: cornerRadius),
-            style: .continuous
-        )
-
-        let y = rect.midY
-        let halfHeight = notchSize.height / 2
-        var tab = Path()
-        tab.move(to: CGPoint(x: rect.minX, y: y - halfHeight))
-        tab.addLine(to: CGPoint(x: rect.minX - notchSize.width, y: y))
-        tab.addLine(to: CGPoint(x: rect.minX, y: y + halfHeight))
-        tab.closeSubpath()
-
-        path.addPath(tab)
-        return path
     }
 }

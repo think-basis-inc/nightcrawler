@@ -43,9 +43,10 @@ struct DetailPanelView: View {
             }
         }
         .padding(Design.px(32))
-        .frame(width: Design.px(600))
+        .padding(.trailing, 12 + Design.px(32))
+        .frame(width: 260, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: Design.px(49.5), style: .continuous)
+            DetailPanelShape(cornerRadius: Design.px(49.5), tailSize: CGSize(width: 12, height: 24))
                 .fill(Palette.card)
         )
         .foregroundStyle(Palette.textPrimary)
@@ -67,7 +68,7 @@ struct WindowRow: View {
     let window: UsageWindow
 
     private var band: UsageBand { UsageBand.band(for: window.fraction) }
-    private var trackWidth: CGFloat { Design.px(600) - 2 * Design.px(32) }
+    private var trackWidth: CGFloat { 260 - 12 - 2 * Design.px(32) }
     private var fillWidth: CGFloat { max(Design.px(10.5), trackWidth * min(window.fraction, 1)) }
 
     var body: some View {

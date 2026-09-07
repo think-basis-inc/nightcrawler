@@ -7,11 +7,15 @@ final class FloatingHUDController {
     private var detailPanel: NSPanel?
     private var settingsWindow: NSWindow?
     private let store: UsageStore
+    private var selectedProviderId: String?
 
     private let defaultsEdgeKey = "hudEdge"
     private let defaultsFrameKey = "hudFrame"
 
     private let pillWidth: CGFloat = Design.px(186)
+    private let tailWidth: CGFloat = 12
+    private let detailPanelWidth: CGFloat = 260
+    private let detailPanelHeight: CGFloat = 180
 
     init(store: UsageStore) {
         self.store = store
@@ -21,11 +25,9 @@ final class FloatingHUDController {
         guard panel == nil else { return }
 
         let content = HUDView(
+            selectedProviderId: selectedProviderId,
             onSelect: { [weak self] reading in
-                if reading.status.isError {
-                    Task { await self?.store.refresh(providerId: reading.providerId) }
-                }
-                self?.showDetail(for: reading)
+                self?.toggleDetail(for: reading)
             },
             onSettings: { [weak self] in
                 self?.showSettings()
@@ -40,7 +42,7 @@ final class FloatingHUDController {
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
@@ -113,17 +115,36 @@ final class FloatingHUDController {
         }
     }
 
-    private func showDetail(for reading: UsageReading) {
+    private func toggleDetail(for reading: UsageReading) {
+        if selectedProviderId == reading.providerId, detailPanel != nil {
+            selectedProviderId = nil
+            closeDetail()
+            return
+        }
+
+        selectedProviderId = reading.providerId
+        if reading.status.isError {
+            Task { await store.refresh(providerId: reading.providerId) }
+        }
+        showDetail(for: reading)
+    }
+
+    private func closeDetail() {
         detailPanel?.close()
+        detailPanel = nil
+    }
+
+    private func showDetail(for reading: UsageReading) {
+        closeDetail()
 
         let hosting = NSHostingController(rootView: DetailPanelView(reading: reading) { [weak self] in
-            self?.detailPanel?.close()
-            self?.detailPanel = nil
+            self?.selectedProviderId = nil
+            self?.closeDetail()
         })
-        hosting.preferredContentSize = NSSize(width: 260, height: 180)
+        hosting.preferredContentSize = NSSize(width: detailPanelWidth, height: detailPanelHeight)
 
         let detail = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 260, height: 180),
+            contentRect: NSRect(x: 0, y: 0, width: detailPanelWidth, height: detailPanelHeight),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -131,7 +152,7 @@ final class FloatingHUDController {
         detail.level = .floating
         detail.backgroundColor = .clear
         detail.isOpaque = false
-        detail.hasShadow = true
+        detail.hasShadow = false
         detail.contentViewController = hosting
         detail.collectionBehavior = [.canJoinAllSpaces, .stationary]
 
@@ -139,30 +160,55 @@ final class FloatingHUDController {
             positionDetail(detail, relativeTo: panel)
         }
 
-        detail.orderFrontRegardless()
+        detail.orderFront(nil)
         detailPanel = detail
     }
 
     private func positionDetail(_ detail: NSPanel, relativeTo panel: NSPanel) {
+        guard let selectedProviderId,
+              let index = store.readings.firstIndex(where: { $0.providerId == selectedProviderId }) else {
+            positionDetailCentered(detail, relativeTo: panel)
+            return
+        }
+
+        let iconY = iconCenterY(fromTop: index)
+        let panelFrame = panel.frame
+        let screen = NSScreen.main?.visibleFrame ?? .zero
+
+        let screenIconY = panelFrame.maxY - iconY
+        let detailSize = detail.frame.size
+
+        var origin = NSPoint(
+            x: panelFrame.minX + tailWidth - detailSize.width,
+            y: screenIconY - detailSize.height / 2
+        )
+
+        origin.y = max(screen.minY + 8, min(origin.y, screen.maxY - detailSize.height - 8))
+        detail.setFrameOrigin(origin)
+    }
+
+    private func positionDetailCentered(_ detail: NSPanel, relativeTo panel: NSPanel) {
         let panelFrame = panel.frame
         let detailSize = detail.frame.size
         let screen = NSScreen.main?.visibleFrame ?? .zero
 
-        var origin: NSPoint
-        switch edge {
-        case .right:
-            origin = NSPoint(x: panelFrame.minX - detailSize.width - 8, y: panelFrame.midY - detailSize.height / 2)
-        case .left:
-            origin = NSPoint(x: panelFrame.maxX + 8, y: panelFrame.midY - detailSize.height / 2)
-        case .top:
-            origin = NSPoint(x: panelFrame.midX - detailSize.width / 2, y: panelFrame.minY - detailSize.height - 8)
-        case .bottom:
-            origin = NSPoint(x: panelFrame.midX - detailSize.width / 2, y: panelFrame.maxY + 8)
-        }
-
+        var origin = NSPoint(
+            x: panelFrame.minX - detailSize.width - 8,
+            y: panelFrame.midY - detailSize.height / 2
+        )
         origin.x = max(screen.minX, min(origin.x, screen.maxX - detailSize.width))
         origin.y = max(screen.minY, min(origin.y, screen.maxY - detailSize.height))
         detail.setFrameOrigin(origin)
+    }
+
+    private func iconCenterY(fromTop index: Int) -> CGFloat {
+        let padTop = Design.px(69.5)
+        let ringDiameter = Design.px(117)
+        let ringLabelGap = Design.px(26.9)
+        let percentHeight = Design.px(27)
+        let cellExtent = ringDiameter + ringLabelGap + percentHeight
+        let cellSpacing = Design.px(83.5)
+        return padTop + ringDiameter / 2 + CGFloat(index) * (cellExtent + cellSpacing)
     }
 
     private func positionPanel(_ panel: NSPanel, edge: ScreenEdge, screen: NSScreen?) {
