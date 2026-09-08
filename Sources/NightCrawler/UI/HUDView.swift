@@ -1,83 +1,34 @@
 import SwiftUI
 
-struct HUDView: View {
-    @EnvironmentObject var store: UsageStore
-    var selectedProviderId: String?
-    var onSelect: ((UsageReading) -> Void)?
-    var onSettings: (() -> Void)?
-
-    private var selectedIndex: Int? {
-        guard let id = selectedProviderId else { return nil }
-        return store.readings.firstIndex(where: { $0.providerId == id })
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: Design.px(83.5)) {
-                    ForEach(store.readings) { reading in
-                        ProviderIcon(reading: reading)
-                            .onTapGesture {
-                                onSelect?(reading)
-                            }
-                    }
-                }
-                .padding(.top, Design.px(69.5))
-                .padding(.bottom, Design.px(50.1))
-                .padding(.horizontal, 10)
-            }
-
-            Image(systemName: "gearshape")
-                .font(.system(size: Design.fontSize(capPixels: 32)))
-                .foregroundStyle(Palette.textSecondary)
-                .frame(width: Design.px(56), height: Design.px(56))
-                .background(Circle().fill(Palette.ringTrack))
-                .onTapGesture {
-                    onSettings?()
-                }
-                .padding(.bottom, Design.px(24))
-        }
-        .frame(width: Design.px(186))
-        .background(
-            HUDTabShape(
-                selectedIndex: selectedIndex,
-                cornerRadius: Design.px(186) / 2,
-                notchSize: CGSize(width: 12, height: 24)
-            )
-            .fill(Palette.notch, style: FillStyle(eoFill: true))
-        )
-    }
-}
-
 struct ProviderIcon: View {
     let reading: UsageReading
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
 
-    private var window: UsageWindow? { reading.headlineWindow }
     private var glyph: ProviderGlyph? { ProviderGlyph.from(providerId: reading.providerId) }
 
     var body: some View {
-        VStack(spacing: Design.px(26.9)) {
+        VStack(spacing: percentageText == nil ? 0 : HUDLayout.ringLabelGap) {
             ZStack {
                 Circle()
-                    .stroke(Palette.ringTrack, lineWidth: Design.px(15.5))
-                    .frame(width: Design.px(117), height: Design.px(117))
+                    .stroke(Palette.ringTrack, lineWidth: HUDLayout.trackStroke)
+                    .frame(width: HUDLayout.ringDiameter, height: HUDLayout.ringDiameter)
 
-                if reading.status == .live, let window {
-                    Circle()
-                        .inset(by: Design.px(15.5) / 2)
-                        .trim(from: 0, to: CGFloat(min(max(window.fraction, 0), 1)))
-                        .stroke(
-                            band.color,
-                            style: StrokeStyle(lineWidth: Design.px(8), lineCap: .round)
-                        )
-                        .rotationEffect(.degrees(-90))
-                        .frame(width: Design.px(117), height: Design.px(117))
+                if reading.status == .live, let outer = reading.outerRingWindow {
+                    usageArc(window: outer, inset: HUDLayout.trackStroke / 2, lineWidth: HUDLayout.progressStroke)
+                }
+
+                if reading.status == .live, let inner = reading.innerRingWindow {
+                    usageArc(
+                        window: inner,
+                        inset: HUDLayout.trackStroke + HUDLayout.progressStroke,
+                        lineWidth: HUDLayout.innerProgressStroke
+                    )
                 }
 
                 if let glyph {
                     ProviderGlyphView(glyph: glyph)
-                        .foregroundStyle(Palette.textPrimary)
+                        .foregroundStyle(sessionAlertColor)
                 } else {
                     Text(initials)
                         .font(.system(size: Design.fontSize(capPixels: 46), weight: .bold))
@@ -86,29 +37,45 @@ struct ProviderIcon: View {
 
                 if reading.status.isError {
                     Circle()
-                        .stroke(Palette.textSecondary, lineWidth: Design.px(8))
-                        .frame(width: Design.px(117), height: Design.px(117))
+                        .stroke(Palette.textSecondary, lineWidth: HUDLayout.progressStroke)
+                        .frame(width: HUDLayout.ringDiameter, height: HUDLayout.ringDiameter)
                 }
             }
-            .frame(width: Design.px(117), height: Design.px(117))
+            .frame(width: HUDLayout.ringDiameter, height: HUDLayout.ringDiameter)
+            // Strokes and glyph paths hit-test on their ink alone, which leaves
+            // the ring interior (and the hollow of glyphs like the OpenAI
+            // knot) dead to the pointer. Make the whole circle the target.
+            .contentShape(Circle())
 
-            Text(percentageText)
-                .font(Typography.percent)
-                .foregroundStyle(reading.status.isError ? Palette.textSecondary : Palette.textPrimary)
-                .fixedSize(horizontal: true, vertical: false)
-                .frame(height: Design.px(27))
+            if let percentageText {
+                Text(percentageText)
+                    .font(Typography.percent)
+                    .foregroundStyle(Palette.textPrimary)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(height: HUDLayout.percentLineHeight)
+            }
         }
-        .scaleEffect(isHovered ? 1.04 : 1.0)
-        .animation(.easeInOut(duration: 0.1), value: isHovered)
+        .scaleEffect(isHovered && !reduceMotion ? 1.04 : 1.0)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.1), value: isHovered)
         .onHover { isHovered in
             self.isHovered = isHovered
         }
         .help(helpText)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(reading.label)
+        .accessibilityValue(percentageAccessibilityText)
     }
 
-    private var band: UsageBand {
-        guard let window else { return .unknown }
-        return UsageBand.band(for: window.fraction)
+    private func usageArc(window: UsageWindow, inset: CGFloat, lineWidth: CGFloat) -> some View {
+        Circle()
+            .inset(by: inset)
+            .trim(from: 0, to: CGFloat(min(max(window.fraction, 0), 1)))
+            .stroke(
+                UsageBand.band(for: window.fraction).color,
+                style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+            )
+            .rotationEffect(.degrees(-90))
+            .frame(width: HUDLayout.ringDiameter, height: HUDLayout.ringDiameter)
     }
 
     private var initials: String {
@@ -117,9 +84,53 @@ struct ProviderIcon: View {
         return String(chars.prefix(2)).uppercased()
     }
 
-    private var percentageText: String {
-        guard !reading.status.isError, let window else { return "—" }
+    private var sessionAlertColor: Color {
+        switch Self.sessionAlertBand(for: reading) {
+        case .watch: return Palette.sessionWatch
+        case .critical, .exhausted: return Palette.critical
+        default: return Palette.textPrimary
+        }
+    }
+
+    static func sessionAlertBand(for reading: UsageReading) -> UsageBand? {
+        guard reading.status == .live,
+              let session = reading.windows.first(where: {
+                  $0.id == "session" || $0.windowMinutes == 300
+              })
+        else { return nil }
+        let band = UsageBand.band(for: session.fraction)
+        return band == .ample ? nil : band
+    }
+
+    private var percentageText: String? {
+        Self.percentageText(for: reading)
+    }
+
+    private var percentageAccessibilityText: String {
+        guard !reading.status.isError else { return "Unavailable" }
+        guard let window = reading.outerRingWindow else {
+            return reading.error ?? "No finite allowance reported"
+        }
+        return Self.accessibilityText(for: window)
+    }
+
+    static func percentageText(for window: UsageWindow) -> String {
+        if window.usedPercent > 0, window.usedPercent < 0.1 {
+            return "<0.1%"
+        }
+        if window.usedPercent > 0, window.usedPercent < 1 {
+            return String(format: "%.1f%%", window.usedPercent)
+        }
         return "\(Int(window.usedPercent))%"
+    }
+
+    static func percentageText(for reading: UsageReading) -> String? {
+        guard reading.status == .live, let window = reading.outerRingWindow else { return nil }
+        return percentageText(for: window)
+    }
+
+    static func accessibilityText(for window: UsageWindow) -> String {
+        "\(percentageText(for: window)) used"
     }
 
     private var helpText: String {
@@ -128,21 +139,24 @@ struct ProviderIcon: View {
             return "\(reading.label): sign in required"
         case .error(let error):
             return "\(reading.label): \(error)"
+        case .unknown:
+            return "\(reading.label): \(reading.error ?? "no finite allowance reported")"
         case .live:
-            guard let window else { return "\(reading.label): no reading" }
-            return "\(reading.label): \(Int(window.usedPercent))% of \(window.limit) \(window.label)"
+            guard let window = reading.outerRingWindow else { return "\(reading.label): no reading" }
+            return "\(reading.label): \(Self.accessibilityText(for: window)) in \(window.label)"
         }
     }
 }
 
 enum UsageBand {
-    case ample, watch, critical, unknown
+    case ample, watch, critical, exhausted, unknown
 
     static func band(for fraction: Double) -> UsageBand {
         switch fraction {
-        case ..<0.7: return .ample
-        case ..<0.9: return .watch
-        default: return .critical
+        case ..<0.50: return .ample
+        case ..<0.70: return .watch
+        case ..<1.00: return .critical
+        default: return .exhausted
         }
     }
 
@@ -150,7 +164,7 @@ enum UsageBand {
         switch self {
         case .ample: return Palette.ample
         case .watch: return Palette.watch
-        case .critical: return Palette.critical
+        case .critical, .exhausted: return Palette.critical
         case .unknown: return Palette.textSecondary
         }
     }
@@ -162,11 +176,13 @@ extension ProviderGlyph {
         case "claude": return .claude
         case "codex": return .openai
         case "cursor": return .cursor
-        case "copilot": return .third
+        case "copilot": return .copilot
         case "grok": return .grok
         case "gemini", "antigravity": return .antigravity
         case "opencode": return .opencode
         case "zcode": return .glm
+        case "devin": return .devin
+        case "cubic": return .cubic
         default: return nil
         }
     }

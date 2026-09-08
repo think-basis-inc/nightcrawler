@@ -2,14 +2,14 @@
 
 A tiny, native macOS HUD that sits on the edge of your screen and shows how much of each AI-coding subscription you’ve burned. It reads credentials each tool already stores locally, so there’s no sign-in, no Electron, no telemetry.
 
-Built for people who run multiple agents (Claude Code, Codex, Cursor, GitHub Copilot, Grok, OpenCode, Antigravity, ZCode / GLM) and want one honest glance at their remaining headroom.
+Built for people who run multiple agents (Claude Code, Codex, Cursor, GitHub Copilot, Grok, Devin, Cubic, OpenCode, Antigravity, ZCode / GLM) and want one honest glance at their remaining headroom.
 
 ## Look
 
-- A small, rounded tab floats on the right, left, top, or bottom edge of the screen.
-- Each enabled provider shows as an icon with a colored ring around it: green → amber → red.
-- Hover an icon for the percentage, used / limit, and reset time.
-- Click an icon to pop out the full data panel.
+- A black rail welds into the chosen screen edge (right, left, top, or bottom) with inverse rounded flares.
+- Each enabled provider shows the same compact percentage convention—always percent used—with a colored ring: green under 50%, yellow to 70%, orange to 100%, red when exhausted.
+- Claude shows two concentric arcs when both All models and Fable weekly windows exist.
+- Click an icon or the tucked settings handle to open an attached slideout with a single teardrop joining it to the rail.
 
 ## Why not a fork of codenotch?
 
@@ -26,12 +26,14 @@ Sources/NightCrawler/
     UsageStore.swift         polls providers, publishes to UI
   Providers/
     UsageProvider.swift      protocol
-    GitHubCopilotUsageProvider.swift  example real provider
+    GitHubCopilotUsageProvider.swift  Copilot CLI + GitHub billing metadata
+    DevinUsageProvider.swift direct Devin account quota
+    CubicUsageProvider.swift read-only Cubic reports from GitHub checks
   UI/
-    HUDView.swift            floating edge tab with icon rings
-    RingView.swift           status-colored ring
-    SettingsView.swift       provider toggles
-    FloatingHUDController.swift  NSPanel positioning
+    HUDRootView.swift        welded rail plus attached slideout
+    HUDView.swift            provider rings
+    SettingsView.swift       custom provider picker
+    FloatingHUDController.swift  single NSPanel on the bezel
 ```
 
 ## Build
@@ -53,20 +55,18 @@ NightCrawler reads credentials the tools already store locally. Install and sign
 
 | Provider | What it reads |
 |---|---|
-| Claude Code | `Claude Code-credentials` item in the macOS Keychain |
-| Codex CLI | `~/.codex/auth.json` |
+| Claude Code | OAuth usage API, with Claude Code’s local non-model `/usage` screen as the no-password fallback |
+| Codex CLI | Current local session rate-limit snapshots, with `~/.codex/auth.json` as the backend fallback |
 | Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
-| GitHub Copilot | `nightcrawler.github.copilot` Keychain item (PAT with `Plan` read-only) |
+| GitHub Copilot | Copilot CLI metadata, then `gh api` premium-request billing when the CLI reports no finite allowance |
 | Grok | `~/.grok/auth.json` |
+| Devin | Direct account-quota request using the existing Devin CLI login (`~/.local/share/devin/credentials.toml`, or XDG data home) |
+| Cubic | Direct read-only GitHub check lookup using `gh` authentication; configure owner/repository in Settings. Last reported allowance, not a live balance. No review is triggered. |
 | OpenCode | `~/.local/share/opencode/auth.json` |
 | Antigravity | `gemini` / `antigravity` Keychain item |
 | ZCode / GLM | `~/.claude/settings.json`, `~/.zcode/v2/config.json`, or `~/.local/share/opencode/auth.json` |
 
-Add the Copilot PAT:
-
-```bash
-security add-generic-password -s "nightcrawler.github.copilot" -a "token" -w "ghp_..."
-```
+Copilot billing percentages need the matching monthly plan limit selected in Settings (Free 50, Pro 300, or Pro+ 1500). GitHub’s billing endpoint also requires one-time **Plan: read** authorization on the existing `gh` login; NightCrawler never reads or stores the GitHub token.
 
 ## Demo mode
 
@@ -76,14 +76,26 @@ To see the HUD without connecting any credentials, open the menu bar item and ch
 NIGHTCRAWLER_DEMO=1 open /Applications/NightCrawler.app
 ```
 
+Demo mode is intentionally temporary and returns to live provider data on the next launch.
+
+## Local agent capacity endpoint
+
+While NightCrawler is running, local agents can read its cached routing snapshot without triggering a provider refresh:
+
+```bash
+curl http://127.0.0.1:17890/v1/capacity
+```
+
+`GET /health` is also available. The listener binds only to `127.0.0.1`, accepts no mutations, and never returns credentials or account identifiers. Each resource reports its persisted `enabled` state, service availability as `available`, `unavailable`, or `unknown`, and capacity windows with independent freshness and reset times. Successful sanitized readings persist for cold-start continuity, are marked stale after two minutes, and are replaced provider-by-provider as fresh reads finish. Devin exposes its reported quota; Cubic exposes its last authoritative reviewed-lines allowance while remaining independently marked unavailable when the review service is down.
+
 ## What works now
 
-- Floating edge HUD with provider icons and colored usage rings
-- Hover for a quick percentage / used / limit / reset summary
-- Click an icon for the full per-provider window breakdown
+- Edge-welded HUD with provider icons and colored usage rings
+- Click an icon for the per-provider window breakdown in an attached slideout
 - Menu bar controls: move the HUD edge, refresh, demo mode, launch at login, settings, quit
-- Per-provider visibility toggles in Settings
-- Position and edge persistence across launches
+- Screen-edge selection plus per-provider visibility and ordering in the attached settings slideout
+- Provider order, visibility, Copilot plan, routing-tool state, and edge preference persist across restarts
+- Loopback-only cached capacity endpoint for local agent routing decisions
 - Reads local credentials from each AI tool; no sign-in or token storage inside the app
 
 ## License

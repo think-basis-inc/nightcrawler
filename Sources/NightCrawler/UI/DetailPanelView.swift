@@ -6,7 +6,7 @@ struct DetailPanelView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: Design.px(17)) {
+            HStack(spacing: HUDLayout.headerGap) {
                 if let glyph = ProviderGlyph.from(providerId: reading.providerId) {
                     ProviderGlyphView(glyph: glyph)
                         .foregroundStyle(Palette.textPrimary)
@@ -19,36 +19,31 @@ struct DetailPanelView: View {
                     Image(systemName: "xmark")
                         .font(Typography.cardBody)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .foregroundStyle(Palette.textSecondary)
+                .accessibilityLabel("Close")
             }
 
-            if reading.status.isError {
+            if reading.status.isError || reading.status == .unknown {
                 Text(statusMessage)
                     .font(Typography.cardBody)
                     .foregroundStyle(Palette.textSecondary)
-                    .padding(.top, Design.px(21))
+                    .padding(.top, HUDLayout.headerToBlock)
             } else if reading.windows.isEmpty {
                 Text("No usage windows reported.")
                     .font(Typography.cardBody)
                     .foregroundStyle(Palette.textSecondary)
-                    .padding(.top, Design.px(21))
+                    .padding(.top, HUDLayout.headerToBlock)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(reading.windows.enumerated()), id: \.element.id) { index, window in
                         WindowRow(window: window)
-                            .padding(.top, index == 0 ? Design.px(21) : Design.px(20))
+                            .padding(.top, index == 0 ? HUDLayout.headerToBlock : HUDLayout.blockSpacing)
                     }
                 }
             }
         }
-        .padding(Design.px(32))
-        .padding(.trailing, 12 + Design.px(32))
-        .frame(width: 260, alignment: .leading)
-        .background(
-            DetailPanelShape(cornerRadius: Design.px(49.5), tailSize: CGSize(width: 12, height: 24))
-                .fill(Palette.card)
-        )
+        .frame(maxWidth: .infinity, alignment: .leading)
         .foregroundStyle(Palette.textPrimary)
     }
 
@@ -58,6 +53,8 @@ struct DetailPanelView: View {
             return reading.error ?? "Sign in required"
         case .error(let message):
             return message
+        case .unknown:
+            return reading.error ?? "No finite allowance reported"
         case .live:
             return ""
         }
@@ -68,8 +65,8 @@ struct WindowRow: View {
     let window: UsageWindow
 
     private var band: UsageBand { UsageBand.band(for: window.fraction) }
-    private var trackWidth: CGFloat { 260 - 12 - 2 * Design.px(32) }
-    private var fillWidth: CGFloat { max(Design.px(10.5), trackWidth * min(window.fraction, 1)) }
+    private var trackWidth: CGFloat { HUDLayout.cardWidth - 2 * HUDLayout.cardPadding }
+    private var fillWidth: CGFloat { max(HUDLayout.barHeight, trackWidth * min(window.fraction, 1)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -88,17 +85,17 @@ struct WindowRow: View {
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(Palette.barTrack)
-                    .frame(width: trackWidth, height: Design.px(10.5))
+                    .frame(width: trackWidth, height: HUDLayout.barHeight)
                 Capsule()
                     .fill(band.color)
-                    .frame(width: fillWidth, height: Design.px(10.5))
+                    .frame(width: fillWidth, height: HUDLayout.barHeight)
             }
-            .padding(.top, Design.px(16.8))
+            .padding(.top, HUDLayout.labelToBar)
 
-            Text("\(Int(window.usedPercent))% Used")
+            Text("\(ProviderIcon.percentageText(for: window)) Used")
                 .font(Typography.cardBody)
                 .foregroundStyle(Palette.textPrimary)
-                .padding(.top, Design.px(17.8))
+                .padding(.top, HUDLayout.barToUsed)
         }
     }
 

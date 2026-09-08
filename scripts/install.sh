@@ -9,26 +9,11 @@ APP_DIR="/Applications/NightCrawler.app"
 rm -rf "$APP_DIR"
 
 mkdir -p "$APP_DIR/Contents/MacOS"
+mkdir -p "$APP_DIR/Contents/Resources"
 cp .build/release/NightCrawler "$APP_DIR/Contents/MacOS/NightCrawler"
-
-cat > "$APP_DIR/Contents/Info.plist" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>NightCrawler</string>
-    <key>CFBundleIdentifier</key>
-    <string>ai.thinkbasis.nightcrawler</string>
-    <key>CFBundleName</key>
-    <string>NightCrawler</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>LSUIElement</key>
-    <true/>
-</dict>
-</plist>
-EOF
+cp -R .build/release/NightCrawler_NightCrawler.bundle "$APP_DIR/NightCrawler_NightCrawler.bundle"
+cp Resources/Info.plist "$APP_DIR/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 echo "Installed $APP_DIR"
 open "$APP_DIR"

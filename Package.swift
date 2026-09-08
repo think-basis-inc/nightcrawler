@@ -10,12 +10,14 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "NightCrawler",
-            path: "Sources/NightCrawler"
+            path: "Sources/NightCrawler",
+            resources: [.copy("Resources/ProviderGlyphs")]
         ),
         .testTarget(
             name: "NightCrawlerTests",
             dependencies: ["NightCrawler"],
-            path: "Tests/NightCrawlerTests"
+            path: "Tests/NightCrawlerTests",
+            exclude: ["Fixtures"]
         )
     ]
 )

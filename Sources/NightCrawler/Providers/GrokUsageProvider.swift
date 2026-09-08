@@ -51,7 +51,7 @@ struct GrokUsageProvider: UsageProvider {
                 return makeReading(status: .error("Grok returned invalid usage metadata"))
             }
 
-            let windows = windows(from: config)
+            let windows = Self.windows(from: config)
             let status: UsageReading.ReadingStatus = windows.isEmpty
                 ? .error("Grok has nothing metered on this account")
                 : .live
@@ -99,7 +99,7 @@ struct GrokUsageProvider: UsageProvider {
         return expires > Date()
     }
 
-    private func windows(from config: [String: Any]) -> [UsageWindow] {
+    static func windows(from config: [String: Any]) -> [UsageWindow] {
         var result: [UsageWindow] = []
         let periodEnd = date(config["currentPeriod"] as? [String: Any])?["end"]
             ?? ProviderHelpers.parseISO8601(config["billingPeriodEnd"] as? String)
@@ -107,19 +107,21 @@ struct GrokUsageProvider: UsageProvider {
         if let percent = percent(config["creditUsagePercent"]) {
             result.append(UsageWindow(
                 id: "credits",
-                label: productLabel(config) ?? "Grok Build",
+                label: totalLabel(config),
                 used: Int(percent * 100),
                 limit: 10000,
                 usedPercent: percent,
                 windowMinutes: windowMinutes(config["currentPeriod"] as? [String: Any]),
                 resetsAt: periodEnd
             ))
-        } else if let products = config["productUsage"] as? [[String: Any]] {
+        }
+
+        if let products = config["productUsage"] as? [[String: Any]] {
             for product in products {
                 guard let percent = percent(product["usagePercent"]) else { continue }
                 let name = humanize((product["product"] as? String) ?? "Usage")
                 result.append(UsageWindow(
-                    id: result.isEmpty ? "credits" : ((product["product"] as? String) ?? name),
+                    id: (product["product"] as? String) ?? name,
                     label: name,
                     used: Int(percent * 100),
                     limit: 10000,
@@ -133,14 +135,15 @@ struct GrokUsageProvider: UsageProvider {
         return result
     }
 
-    private func productLabel(_ config: [String: Any]) -> String? {
-        guard let products = config["productUsage"] as? [[String: Any]],
-              let name = products.first?["product"] as? String
-        else { return nil }
-        return humanize(name)
+    private static func totalLabel(_ config: [String: Any]) -> String {
+        let period = config["currentPeriod"] as? [String: Any]
+        if (period?["type"] as? String) == "USAGE_PERIOD_TYPE_WEEKLY" {
+            return "Weekly SuperGrok Heavy Limit"
+        }
+        return "SuperGrok Heavy Limit"
     }
 
-    private func humanize(_ name: String) -> String {
+    private static func humanize(_ name: String) -> String {
         var result = ""
         for character in name {
             if character.isUppercase, !result.isEmpty { result.append(" ") }
@@ -149,7 +152,7 @@ struct GrokUsageProvider: UsageProvider {
         return result
     }
 
-    private func date(_ period: [String: Any]?) -> [String: Date]? {
+    private static func date(_ period: [String: Any]?) -> [String: Date]? {
         guard let period else { return nil }
         return [
             "start": ProviderHelpers.parseISO8601(period["start"] as? String),
@@ -157,13 +160,16 @@ struct GrokUsageProvider: UsageProvider {
         ].compactMapValues { $0 }
     }
 
-    private func windowMinutes(_ period: [String: Any]?) -> Int? {
+    private static func windowMinutes(_ period: [String: Any]?) -> Int? {
         guard let dates = date(period), let start = dates["start"], let end = dates["end"], end > start else { return nil }
         return Int(end.timeIntervalSince(start) / 60)
     }
 
-    private func percent(_ value: Any?) -> Double? {
-        (value as? NSNumber)?.doubleValue
+    private static func percent(_ value: Any?) -> Double? {
+        guard let number = value as? NSNumber else { return nil }
+        let percent = number.doubleValue
+        guard percent.isFinite, (0...100).contains(percent) else { return nil }
+        return percent
     }
 
     private func makeReading(status: UsageReading.ReadingStatus, error: String? = nil) -> UsageReading {

@@ -16,9 +16,30 @@ struct UsageReading: Identifiable, Equatable, Sendable {
         windows.max { $0.fraction < $1.fraction }
     }
 
+    var outerRingWindow: UsageWindow? {
+        if providerId == "devin" {
+            return windows.first { $0.id == "weekly" }
+        }
+        return windows.first { $0.id == "weekly_all" || $0.id == "cursor_models" } ?? headlineWindow
+    }
+
+    var innerRingWindow: UsageWindow? {
+        switch providerId {
+        case "claude":
+            return windows.first { $0.id == "weekly_scoped" || $0.id == "fable" }
+        case "cursor":
+            return windows.first { $0.id == "other_models" }
+        case "devin":
+            return windows.first { $0.id == "daily" }
+        default:
+            return nil
+        }
+    }
+
     enum ReadingStatus: Equatable, Sendable {
         case live
         case needsAuth
+        case unknown
         case error(String)
     }
 }

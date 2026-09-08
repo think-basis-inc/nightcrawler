@@ -1,82 +1,78 @@
 import Foundation
-import Security
 
-/// Reads GitHub Copilot premium request usage from GitHub's billing API.
-/// Expects a Personal Access Token with `Plan` read-only permission stored
-/// in the macOS Keychain under the service name `nightcrawler.github.copilot`.
+/// Reads GitHub Copilot quota through the Copilot CLI's metadata-only
+/// stdio JSON-RPC (ping → auth.getStatus → account.getQuota).
 struct GitHubCopilotUsageProvider: UsageProvider {
     let id = "copilot"
     let label = "GitHub Copilot"
 
-    private static let keychainService = "nightcrawler.github.copilot"
-    private static let keychainAccount = "token"
-
     var isAvailable: Bool {
-        getToken() != nil
+        CopilotRPCClient.defaultCommand() != nil
     }
 
     func read() async -> UsageReading {
-        guard let token = getToken() else {
-            return makeReading(status: .needsAuth, error: "Add a GitHub PAT with Plan read permission to the Keychain")
+        guard let command = CopilotRPCClient.defaultCommand() else {
+            return makeReading(
+                status: .needsAuth,
+                error: "Install and sign in to GitHub Copilot CLI to read usage"
+            )
         }
+        var result = await CopilotRPCClient(command: command, timeout: 19).query()
+        if result.windows.isEmpty, result.status != .needsAuth {
+            let billing = await CopilotBillingClient(planLimit: CopilotPlanSettings.current()).query()
+            result = Self.reconcile(cli: result, billing: billing)
+        }
+        return map(result)
+    }
 
-        var request = URLRequest(
-            url: URL(string: "https://api.github.com/users/copilot/usage")!,
-            cachePolicy: .reloadIgnoringLocalCacheData
-        )
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 15
+    static func reconcile(
+        cli: CopilotQuotaParser.Result,
+        billing: CopilotQuotaParser.Result
+    ) -> CopilotQuotaParser.Result {
+        if !billing.windows.isEmpty {
+            var measured = billing
+            measured.accountId = cli.accountId
+            return measured
+        }
+        if billing.status == .needsAuth, cli.status != .needsAuth {
+            var authenticated = cli
+            authenticated.status = .unknown
+            authenticated.error = billing.error
+            return authenticated
+        }
+        return cli
+    }
 
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                return makeReading(status: .error("Bad response"))
-            }
-            if http.statusCode == 401 || http.statusCode == 403 {
-                return makeReading(status: .needsAuth, error: "GitHub token lacks Copilot billing permission")
-            }
-            guard http.statusCode == 200 else {
-                return makeReading(status: .error("GitHub returned \(http.statusCode)"))
-            }
-            let payload = try JSONDecoder().decode(CopilotUsage.self, from: data)
-            let used = payload.total_requests
-            let limit = payload.plan_limit
-            let percent = limit > 0 ? (Double(used) / Double(limit)) * 100 : 0
-            let window = UsageWindow(
-                id: "premium_interactions",
-                label: "Premium requests",
-                used: used,
-                limit: limit,
-                usedPercent: percent,
+    private func map(_ result: CopilotQuotaParser.Result) -> UsageReading {
+        let windows = result.windows.map { window in
+            UsageWindow(
+                id: window.id,
+                label: window.label,
+                used: Int(window.usedPercent.rounded()),
+                limit: 100,
+                usedPercent: window.usedPercent,
                 windowMinutes: nil,
-                resetsAt: parseResetDate(payload.reset_date)
+                resetsAt: window.resetsAt
             )
-            return UsageReading(
-                providerId: id,
-                label: label,
-                accountId: nil,
-                authMode: "subscription",
-                source: "github_copilot_billing",
-                windows: limit > 0 ? [window] : [],
-                status: limit > 0 ? .live : .error("No finite Copilot subscription allowance reported"),
-                observedAt: Date(),
-                error: nil
-            )
-        } catch {
-            return makeReading(status: .error("Request failed"))
         }
-    }
-
-    private func getToken() -> String? {
-        Keychain.readPassword(service: Self.keychainService, account: Self.keychainAccount)
-    }
-
-    private func parseResetDate(_ value: String?) -> Date? {
-        guard let value else { return nil }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withFullDate]
-        return formatter.date(from: value)
+        let status: UsageReading.ReadingStatus
+        switch result.status {
+        case .live: status = .live
+        case .needsAuth: status = .needsAuth
+        case .unknown: status = .unknown
+        case .error: status = .error(result.error ?? "Copilot account quota is unavailable from this CLI")
+        }
+        return UsageReading(
+            providerId: id,
+            label: label,
+            accountId: result.accountId,
+            authMode: result.authMode,
+            source: "copilot_account_quota",
+            windows: windows,
+            status: status,
+            observedAt: windows.isEmpty ? nil : Date(),
+            error: result.error
+        )
     }
 
     private func makeReading(status: UsageReading.ReadingStatus, error: String? = nil) -> UsageReading {
@@ -85,17 +81,11 @@ struct GitHubCopilotUsageProvider: UsageProvider {
             label: label,
             accountId: nil,
             authMode: "unknown",
-            source: "github_copilot_billing",
+            source: "copilot_account_quota",
             windows: [],
             status: status,
             observedAt: nil,
             error: error
         )
     }
-}
-
-private struct CopilotUsage: Decodable {
-    let total_requests: Int
-    let plan_limit: Int
-    let reset_date: String?
 }

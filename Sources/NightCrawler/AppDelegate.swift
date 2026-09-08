@@ -8,12 +8,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = UsageStore()
     private var hud: FloatingHUDController?
     private var statusItem: NSStatusItem?
+    private var capacityServer: LocalCapacityServer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
-        if ProcessInfo.processInfo.environment["NIGHTCRAWLER_DEMO"] == "1" || DemoState.isEnabled {
-            store.readings = DemoData.readings
+        let isDemo = ProcessInfo.processInfo.environment["NIGHTCRAWLER_DEMO"] == "1"
+        DemoState.isEnabled = isDemo
+        if isDemo {
+            store.setDemoMode(true)
         }
 
         let hud = FloatingHUDController(store: store)
@@ -25,11 +28,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = makeMenu()
         self.statusItem = statusItem
 
-        let isDemo = ProcessInfo.processInfo.environment["NIGHTCRAWLER_DEMO"] == "1" || DemoState.isEnabled
-        store.startPolling(skipInitialPoll: isDemo)
+        let capacityServer = LocalCapacityServer { [store] in
+            CapacitySnapshot.make(from: store)
+        }
+        do {
+            try capacityServer.start()
+            self.capacityServer = capacityServer
+        } catch {
+            os_log("Failed to start local capacity endpoint: %{public}@", error.localizedDescription)
+        }
+
+        if !isDemo {
+            store.startPolling()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        capacityServer?.stop()
         hud?.hide()
     }
 
@@ -59,7 +74,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleDemoMode(_ sender: NSMenuItem) {
         let isDemo = !DemoState.isEnabled
         DemoState.isEnabled = isDemo
-        store.readings = isDemo ? DemoData.readings : []
+        if isDemo {
+            store.setDemoMode(true)
+        } else {
+            store.setDemoMode(false)
+            store.startPolling()
+        }
         sender.state = isDemo ? .on : .off
     }
 
@@ -100,22 +120,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 @MainActor
 enum DemoState {
-    @UserDefault("demoMode", defaultValue: false)
-    static var isEnabled: Bool
-}
-
-@propertyWrapper
-struct UserDefault<T> {
-    let key: String
-    let defaultValue: T
-
-    var wrappedValue: T {
-        get { UserDefaults.standard.object(forKey: key) as? T ?? defaultValue }
-        nonmutating set { UserDefaults.standard.set(newValue, forKey: key) }
-    }
-
-    init(_ key: String, defaultValue: T) {
-        self.key = key
-        self.defaultValue = defaultValue
-    }
+    static var isEnabled = false
 }
