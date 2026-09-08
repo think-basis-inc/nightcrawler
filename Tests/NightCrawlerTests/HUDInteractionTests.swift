@@ -30,7 +30,7 @@ func miniModeOnlyCompactsAnIdleRailAndExpandsOnHover() {
     #expect(HUDLayout.railScale(miniMode: true, isHovered: true) == 1)
     #expect(
         HUDLayout.railScale(miniMode: true, isHovered: false) == 0.70,
-        "a full-size slideout must not expand the Mini rail unless the rail itself is hovered"
+        "an idle Mini rail remains compact when no interaction holds it open"
     )
 }
 
@@ -43,6 +43,31 @@ func hiddenHUDRetractsCompletelyPastEachScreenEdge() {
     #expect(HUDVisibilityGeometry.hiddenFrame(normal, edge: .left, retraction: distance).minX == normal.minX - distance)
     #expect(HUDVisibilityGeometry.hiddenFrame(normal, edge: .top, retraction: distance).minY == normal.minY + distance)
     #expect(HUDVisibilityGeometry.hiddenFrame(normal, edge: .bottom, retraction: distance).minY == normal.minY - distance)
+}
+
+@MainActor
+@Test
+func openCardsKeepMiniExpandedWhenThePointerLeavesTheRail() {
+    func scale(_ mode: HUDSurfaceState.Mode, hovered: Bool, fitScale: CGFloat = 1) -> CGFloat {
+        HUDRootView(
+            surface: .constant(HUDSurfaceState(mode: mode)),
+            isExternallyHovered: .constant(hovered),
+            edge: .right,
+            isMiniModeEnabled: true,
+            railFitScale: fitScale,
+            onSelect: { _ in }, onSettings: {}, onEdgeChange: { _ in }, onDismiss: {}
+        ).tabScale
+    }
+
+    for mode: HUDSurfaceState.Mode in [.settings, .detail(providerId: "claude")] {
+        #expect(scale(mode, hovered: false) == scale(mode, hovered: true),
+                "moving from the rail into an open card must not move its attachment point")
+        #expect(scale(mode, hovered: false) == 1)
+        #expect(scale(mode, hovered: false, fitScale: 0.8) == 0.8,
+                "an open card must still respect the screen-fit limit")
+    }
+    #expect(scale(.idle, hovered: false) == 0.70)
+    #expect(scale(.idle, hovered: true) == 1)
 }
 
 @Test
@@ -146,6 +171,23 @@ func fullSettingsContentFitsItsAllocatedCardHeight() {
         routingToolCount: store.routingToolStates.count
     )
     #expect(required <= allocated, "all settings including the last availability row must fit")
+}
+
+@Test
+func settingsHoverIsBoundToTheButtonBeforePanelPositioning() throws {
+    // Static modifier-order lock: SwiftUI's physical pointer tracking cannot be
+    // driven by NSWindow.sendEvent in this unit harness. Verify the real app too.
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let source = try String(contentsOf: root.appendingPathComponent(
+        "Sources/NightCrawler/UI/HUDRootView.swift"), encoding: .utf8)
+    let start = try #require(source.range(of: "private func settingsHandle"))
+    let end = try #require(source.range(of: "private var tabScaleAnchor"))
+    let handle = source[start.lowerBound..<end.lowerBound]
+    let hover = try #require(handle.range(of: ".onHover"))
+    let position = try #require(handle.range(of: ".position"))
+    #expect(hover.lowerBound < position.lowerBound,
+            "hover must track the visible gear, not the panel-sized positioning wrapper")
 }
 
 @MainActor

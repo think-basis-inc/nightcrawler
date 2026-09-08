@@ -44,10 +44,10 @@ struct HUDRootView: View {
     private var notchSize: CGSize {
         NotchPlacement.panelSize(edge: edge, length: shapeLength, depth: notchDepth)
     }
-    private var tabScale: CGFloat {
+    var tabScale: CGFloat {
         HUDLayout.railScale(
             miniMode: isMiniModeEnabled,
-            isHovered: hoveringRail || hoveringSettings || isExternallyHovered,
+            isHovered: hoveringRail || hoveringSettings || isExternallyHovered || surface.mode != .idle,
             fitScale: railFitScale
         )
     }
@@ -120,17 +120,17 @@ struct HUDRootView: View {
         }
             .buttonStyle(.plain)
             .contentShape(Circle())
+            .onHover { isHovered in
+                hoveringSettings = isHovered
+                isExternallyHovered = isHovered
+                onHoverChange(isHovered)
+            }
             .scaleEffect(tabScale)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: tabScale)
             .position(place.point(
                 along: scaledTabAlong(slack + shapeLength),
                 across: HUDLayout.orbInsetFromEdge * tabScale
             ))
-            .onHover { isHovered in
-                hoveringSettings = isHovered
-                isExternallyHovered = isHovered
-                onHoverChange(isHovered)
-            }
             .accessibilityLabel("Settings")
     }
 
