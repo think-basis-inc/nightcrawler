@@ -28,7 +28,7 @@ struct ProviderIcon: View {
 
                 if let glyph {
                     ProviderGlyphView(glyph: glyph)
-                        .foregroundStyle(Palette.textPrimary)
+                        .foregroundStyle(sessionAlertColor)
                 } else {
                     Text(initials)
                         .font(.system(size: Design.fontSize(capPixels: 46), weight: .bold))
@@ -80,26 +80,53 @@ struct ProviderIcon: View {
         return String(chars.prefix(2)).uppercased()
     }
 
+    private var sessionAlertColor: Color {
+        switch Self.sessionAlertBand(for: reading) {
+        case .watch: return Palette.sessionWatch
+        case .critical, .exhausted: return Palette.critical
+        default: return Palette.textPrimary
+        }
+    }
+
+    static func sessionAlertBand(for reading: UsageReading) -> UsageBand? {
+        guard reading.status == .live,
+              let session = reading.windows.first(where: {
+                  $0.id == "session" || $0.windowMinutes == 300
+              })
+        else { return nil }
+        let band = UsageBand.band(for: session.fraction)
+        return band == .ample ? nil : band
+    }
+
     private var percentageText: String? {
         Self.percentageText(for: reading)
     }
 
     private var percentageAccessibilityText: String {
-        guard !reading.status.isError, let window = reading.outerRingWindow else { return "Unavailable" }
+        guard !reading.status.isError else { return "Unavailable" }
+        guard let window = reading.outerRingWindow else {
+            return reading.error ?? "No finite allowance reported"
+        }
         return Self.accessibilityText(for: window)
     }
 
     static func percentageText(for window: UsageWindow) -> String {
-        "\(Int(window.usedPercent))%"
+        if window.usedPercent > 0, window.usedPercent < 0.1 {
+            return "<0.1%"
+        }
+        if window.usedPercent > 0, window.usedPercent < 1 {
+            return String(format: "%.1f%%", window.usedPercent)
+        }
+        return "\(Int(window.usedPercent))%"
     }
 
     static func percentageText(for reading: UsageReading) -> String? {
-        guard !reading.status.isError, let window = reading.outerRingWindow else { return nil }
+        guard reading.status == .live, let window = reading.outerRingWindow else { return nil }
         return percentageText(for: window)
     }
 
     static func accessibilityText(for window: UsageWindow) -> String {
-        "\(Int(window.usedPercent))% used"
+        "\(percentageText(for: window)) used"
     }
 
     private var helpText: String {
@@ -109,7 +136,7 @@ struct ProviderIcon: View {
         case .error(let error):
             return "\(reading.label): \(error)"
         case .unknown:
-            return "\(reading.label): no finite allowance reported"
+            return "\(reading.label): \(reading.error ?? "no finite allowance reported")"
         case .live:
             guard let window = reading.outerRingWindow else { return "\(reading.label): no reading" }
             return "\(reading.label): \(Self.accessibilityText(for: window)) in \(window.label)"
@@ -145,7 +172,7 @@ extension ProviderGlyph {
         case "claude": return .claude
         case "codex": return .openai
         case "cursor": return .cursor
-        case "copilot": return .third
+        case "copilot": return .copilot
         case "grok": return .grok
         case "gemini", "antigravity": return .antigravity
         case "opencode": return .opencode

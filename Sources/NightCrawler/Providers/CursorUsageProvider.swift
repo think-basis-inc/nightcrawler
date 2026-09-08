@@ -38,34 +38,9 @@ struct CursorUsageProvider: UsageProvider {
             }
 
             guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let usage = root["individualUsage"] as? [String: Any]
+                  let windows = Self.windows(from: root)
             else {
                 return makeReading(status: .error("Cursor returned invalid usage metadata"))
-            }
-
-            let plan = usage["plan"] as? [String: Any] ?? [:]
-            let start = ProviderHelpers.parseISO8601(root["billingCycleStart"] as? String)
-            let end = ProviderHelpers.parseISO8601(root["billingCycleEnd"] as? String)
-            var windows: [UsageWindow] = []
-
-            if let totalPercent = plan["totalPercentUsed"] as? Double {
-                let windowMinutes: Int? = {
-                    guard let start, let end, end > start else { return nil }
-                    return Int(end.timeIntervalSince(start) / 60)
-                }()
-                windows.append(UsageWindow(
-                    id: "included",
-                    label: "Included usage",
-                    used: Int(totalPercent * 100),
-                    limit: 10000,
-                    usedPercent: totalPercent,
-                    windowMinutes: windowMinutes,
-                    resetsAt: end
-                ))
-            }
-
-            if let onDemand = spendWindow(usage["onDemand"], id: "on_demand", label: "On demand", resetsAt: end) {
-                windows.append(onDemand)
             }
 
             let status: UsageReading.ReadingStatus = windows.isEmpty
@@ -85,6 +60,69 @@ struct CursorUsageProvider: UsageProvider {
         } catch {
             return makeReading(status: .error("Cursor usage request failed"))
         }
+    }
+
+    static func windows(from root: [String: Any]) -> [UsageWindow]? {
+        guard let usage = root["individualUsage"] as? [String: Any] else { return nil }
+        let plan = usage["plan"] as? [String: Any] ?? [:]
+        let start = ProviderHelpers.parseISO8601(root["billingCycleStart"] as? String)
+        let end = ProviderHelpers.parseISO8601(root["billingCycleEnd"] as? String)
+        let windowMinutes: Int? = {
+            guard let start, let end, end > start else { return nil }
+            return Int(end.timeIntervalSince(start) / 60)
+        }()
+        var windows: [UsageWindow] = []
+
+        if let cursorModels = (plan["autoPercentUsed"] as? NSNumber)?.doubleValue {
+            windows.append(percentWindow(
+                id: "cursor_models",
+                label: "Cursor Models",
+                percent: cursorModels,
+                windowMinutes: windowMinutes,
+                resetsAt: end
+            ))
+        }
+        if let otherModels = (plan["apiPercentUsed"] as? NSNumber)?.doubleValue {
+            windows.append(percentWindow(
+                id: "other_models",
+                label: "Other Models",
+                percent: otherModels,
+                windowMinutes: windowMinutes,
+                resetsAt: end
+            ))
+        }
+        if windows.isEmpty,
+           let totalPercent = (plan["totalPercentUsed"] as? NSNumber)?.doubleValue {
+            windows.append(percentWindow(
+                id: "included",
+                label: "Included usage",
+                percent: totalPercent,
+                windowMinutes: windowMinutes,
+                resetsAt: end
+            ))
+        }
+        if let onDemand = spendWindow(usage["onDemand"], id: "on_demand", label: "On demand", resetsAt: end) {
+            windows.append(onDemand)
+        }
+        return windows
+    }
+
+    private static func percentWindow(
+        id: String,
+        label: String,
+        percent: Double,
+        windowMinutes: Int?,
+        resetsAt: Date?
+    ) -> UsageWindow {
+        UsageWindow(
+            id: id,
+            label: label,
+            used: Int(percent * 100),
+            limit: 10_000,
+            usedPercent: percent,
+            windowMinutes: windowMinutes,
+            resetsAt: resetsAt
+        )
     }
 
     private func readCredentials() async -> Credentials? {
@@ -119,7 +157,7 @@ struct CursorUsageProvider: UsageProvider {
         )
     }
 
-    private func spendWindow(_ value: Any?, id: String, label: String, resetsAt: Date?) -> UsageWindow? {
+    private static func spendWindow(_ value: Any?, id: String, label: String, resetsAt: Date?) -> UsageWindow? {
         guard let bucket = value as? [String: Any],
               (bucket["enabled"] as? Bool) == true,
               let limit = (bucket["limit"] as? NSNumber)?.doubleValue, limit > 0,

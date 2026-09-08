@@ -29,7 +29,7 @@ func copilotMetadataOnlyRPCUsesSanitizedEnvironment() async {
     #expect(client.lastEnvironment?.keys.contains("GH_TOKEN") != true)
     #expect(client.lastEnvironment?.keys.contains("GITHUB_TOKEN") != true)
     #expect(client.lastEnvironment?.keys.contains("COPILOT_GITHUB_TOKEN") != true)
-    #expect(Set((client.lastEnvironment ?? [:]).keys).isSubset(of: ["HOME", "PATH", "LANG", "TMPDIR"]))
+    #expect(Set((client.lastEnvironment ?? [:]).keys).isSubset(of: RestrictedProcess.allowedKeys))
 }
 
 @Test

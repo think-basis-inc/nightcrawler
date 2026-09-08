@@ -68,6 +68,37 @@ enum CopilotQuotaParser {
         return Result(status: .live, windows: windows, error: nil, accountId: nil, authMode: "unknown")
     }
 
+    static func parseBilling(_ raw: Any, planLimit: Int, now: Date) -> Result {
+        guard planLimit > 0, planLimit <= 1_000_000,
+              let dict = raw as? [String: Any],
+              let items = dict["usageItems"] as? [[String: Any]]
+        else {
+            return .empty(status: .error, error: "GitHub returned invalid Copilot billing metadata")
+        }
+
+        let used = items.reduce(0.0) { total, item in
+            guard item["product"] as? String == "Copilot",
+                  let amount = number(item["grossQuantity"])
+            else { return total }
+            return total + amount
+        }
+        guard used.isFinite else {
+            return .empty(status: .error, error: "GitHub returned invalid Copilot billing metadata")
+        }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let month = calendar.date(from: calendar.dateComponents([.year, .month], from: now))
+        let reset = month.flatMap { calendar.date(byAdding: .month, value: 1, to: $0) }
+        let window = Window(
+            id: "premium_interactions",
+            label: "Monthly premium requests",
+            usedPercent: used / Double(planLimit) * 100,
+            resetsAt: reset
+        )
+        return Result(status: .live, windows: [window], error: nil, accountId: nil, authMode: "subscription")
+    }
+
     private static func number(_ value: Any?) -> Double? {
         if value is Bool { return nil }
         if let number = value as? NSNumber {

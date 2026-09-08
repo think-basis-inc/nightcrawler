@@ -2,14 +2,14 @@
 
 A tiny, native macOS HUD that sits on the edge of your screen and shows how much of each AI-coding subscription you’ve burned. It reads credentials each tool already stores locally, so there’s no sign-in, no Electron, no telemetry.
 
-Built for people who run multiple agents (Claude Code, Codex, Cursor, GitHub Copilot, Grok, OpenCode, Antigravity, ZCode / GLM) and want one honest glance at their remaining headroom.
+Built for people who run multiple agents (Claude Code, Codex, Cursor, GitHub Copilot, Grok, Devin, Cubic, OpenCode, Antigravity, ZCode / GLM) and want one honest glance at their remaining headroom.
 
 ## Look
 
 - A black rail welds into the chosen screen edge (right, left, top, or bottom) with inverse rounded flares.
 - Each enabled provider shows the same compact percentage convention—always percent used—with a colored ring: green under 50%, yellow to 70%, orange to 100%, red when exhausted.
 - Claude shows two concentric arcs when both All models and Fable weekly windows exist.
-- Click an icon or the tucked settings handle to open an attached slideout joined to the rail by a pinched, curved liquid tendril rather than a popover pointer.
+- Click an icon or the tucked settings handle to open an attached slideout with a single teardrop joining it to the rail.
 
 ## Why not a fork of codenotch?
 
@@ -26,7 +26,8 @@ Sources/NightCrawler/
     UsageStore.swift         polls providers, publishes to UI
   Providers/
     UsageProvider.swift      protocol
-    GitHubCopilotUsageProvider.swift  Copilot CLI metadata RPC
+    GitHubCopilotUsageProvider.swift  Copilot CLI + GitHub billing metadata
+    DinoUsageCache.swift     sanitized Devin/Cubic monitoring snapshots
   UI/
     HUDRootView.swift        welded rail plus attached slideout
     HUDView.swift            provider rings
@@ -53,14 +54,18 @@ NightCrawler reads credentials the tools already store locally. Install and sign
 
 | Provider | What it reads |
 |---|---|
-| Claude Code | `Claude Code-credentials` item in the macOS Keychain |
-| Codex CLI | `~/.codex/auth.json` |
+| Claude Code | OAuth usage API, with Claude Code’s local non-model `/usage` screen as the no-password fallback |
+| Codex CLI | Current local session rate-limit snapshots, with `~/.codex/auth.json` as the backend fallback |
 | Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
-| GitHub Copilot | Copilot CLI (`copilot --headless --stdio`); metadata-only `account.getQuota` |
+| GitHub Copilot | Copilot CLI metadata, then `gh api` premium-request billing when the CLI reports no finite allowance |
 | Grok | `~/.grok/auth.json` |
+| Devin | Sanitized `~/.dino[-beta]/subscriptions-devin.json` monitoring snapshot |
+| Cubic | Last authoritative reviewed-lines report in sanitized `~/.dino[-beta]/subscriptions-cubic.json` |
 | OpenCode | `~/.local/share/opencode/auth.json` |
 | Antigravity | `gemini` / `antigravity` Keychain item |
 | ZCode / GLM | `~/.claude/settings.json`, `~/.zcode/v2/config.json`, or `~/.local/share/opencode/auth.json` |
+
+Copilot billing percentages need the matching monthly plan limit selected in Settings (Free 50, Pro 300, or Pro+ 1500). GitHub’s billing endpoint also requires one-time **Plan: read** authorization on the existing `gh` login; NightCrawler never reads or stores the GitHub token.
 
 ## Demo mode
 
@@ -80,7 +85,7 @@ While NightCrawler is running, local agents can read its cached routing snapshot
 curl http://127.0.0.1:17890/v1/capacity
 ```
 
-`GET /health` is also available. The listener binds only to `127.0.0.1`, accepts no mutations, and never returns credentials or account identifiers. Each resource reports its persisted `enabled` state, `available` as `available`, `unavailable`, or `unknown`, and capacity windows with freshness and reset times. Tools without an authoritative quota source report unknown capacity. Devin and Cubic appear in the attached Agent routing settings; Cubic starts disabled and unavailable.
+`GET /health` is also available. The listener binds only to `127.0.0.1`, accepts no mutations, and never returns credentials or account identifiers. Each resource reports its persisted `enabled` state, service availability as `available`, `unavailable`, or `unknown`, and capacity windows with independent freshness and reset times. Successful sanitized readings persist for cold-start continuity, are marked stale after two minutes, and are replaced provider-by-provider as fresh reads finish. Devin exposes its reported quota; Cubic exposes its last authoritative reviewed-lines allowance while remaining independently marked unavailable when the review service is down.
 
 ## What works now
 
@@ -88,7 +93,7 @@ curl http://127.0.0.1:17890/v1/capacity
 - Click an icon for the per-provider window breakdown in an attached slideout
 - Menu bar controls: move the HUD edge, refresh, demo mode, launch at login, settings, quit
 - Screen-edge selection plus per-provider visibility and ordering in the attached settings slideout
-- Provider order, visibility, routing-tool state, and edge preference persist across restarts
+- Provider order, visibility, Copilot plan, routing-tool state, and edge preference persist across restarts
 - Loopback-only cached capacity endpoint for local agent routing decisions
 - Reads local credentials from each AI tool; no sign-in or token storage inside the app
 

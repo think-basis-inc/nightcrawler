@@ -38,18 +38,52 @@ func slideoutTailHasNoGapFromTheRail() {
 }
 
 @Test
-func slideoutNeckIsAPinchedLiquidTendrilRatherThanAFunnel() {
+func slideoutUsesAOneSidedTeardropConnector() {
     let rect = CGRect(x: 0, y: 0, width: 60, height: 72)
     let path = LiquidNeck(direction: .leading).path(in: rect)
 
-    #expect(path.contains(CGPoint(x: 1, y: rect.midY - 4)))
-    #expect(path.contains(CGPoint(x: rect.midX, y: rect.midY - 7)))
-    #expect(path.contains(CGPoint(x: 59, y: rect.midY - 4)))
-    #expect(path.contains(CGPoint(x: 59, y: rect.midY + 4)))
-    #expect(!path.contains(CGPoint(x: 1, y: rect.minY + 5)))
-    #expect(!path.contains(CGPoint(x: 1, y: rect.maxY - 5)))
-    #expect(!path.contains(CGPoint(x: 59, y: rect.minY + 2)))
-    #expect(!path.contains(CGPoint(x: 59, y: rect.maxY - 2)))
+    #expect(path.contains(CGPoint(x: 1, y: rect.midY - 20)))
+    #expect(path.contains(CGPoint(x: 1, y: rect.midY + 20)))
+    #expect(path.contains(CGPoint(x: 59, y: rect.midY)))
+    #expect(!path.contains(CGPoint(x: 59, y: rect.midY - 10)))
+    #expect(
+        !path.contains(CGPoint(x: rect.midX, y: rect.midY - 15)),
+        "the teardrop sides must pull inward, not bulge into a convex leaf"
+    )
+    #expect(path.contains(CGPoint(x: rect.midX, y: rect.midY - 2)))
+}
+
+@Test
+func liquidNeckUsesMostOfTheDetailCardEdgeInsteadOfCollapsingIntoABowTie() {
+    let detailHeight = HUDLayout.cardHeight(windowCount: 3)
+    #expect(HUDLayout.tailHeight >= detailHeight * 0.65)
+}
+
+@Test
+func oneWindowSlideoutClampsTheConnectorRootToTheCard() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let source = try String(
+        contentsOf: root.appendingPathComponent("Sources/NightCrawler/UI/HUDRootView.swift"),
+        encoding: .utf8
+    )
+
+    #expect(
+        source.contains("LiquidNeck.size(for: direction, cardAlong: cardAlong)"),
+        "short detail cards must clamp the connector root instead of letting it overrun the rounded card"
+    )
+}
+
+@Test
+func liquidNeckSizeNeverExceedsItsCardEdge() {
+    let shortCard = HUDLayout.cardHeight(windowCount: 1)
+    let side = LiquidNeck.size(for: .leading, cardAlong: shortCard)
+    let top = LiquidNeck.size(for: .down, cardAlong: HUDLayout.cardWidth)
+
+    #expect(side.height <= shortCard - 2 * HUDLayout.cardCorner)
+    #expect(top.width == HUDLayout.tailHeight)
 }
 
 @Test
@@ -61,6 +95,18 @@ func railLengthGrowsWithVisibleProviderCount() {
     #expect(one > empty)
     let pitch = HUDLayout.cellPitch(for: .right)
     #expect(abs((three - one) - pitch * 2) < 0.001)
+}
+
+@Test
+func railAutomaticallyFitsAllProvidersInsideTheVisibleScreenLength() {
+    let available: CGFloat = 1_037
+    let required = HUDLayout.requiredRailLength(cellCount: 11, edge: .right)
+    let fit = HUDLayout.railFitScale(cellCount: 11, edge: .right, availableLength: available)
+
+    #expect(fit < 1)
+    #expect(required * fit <= available + 0.001)
+    #expect(HUDLayout.railScale(miniMode: false, isHovered: false, fitScale: fit) == fit)
+    #expect(HUDLayout.railScale(miniMode: true, isHovered: false, fitScale: fit) == HUDLayout.compactRailScale)
 }
 
 @Test
@@ -117,4 +163,43 @@ func claudeRailExposesConcentricAllModelsAndFableWindows() {
 func scopedWeeklyWindowUsesFableLabel() {
     #expect(ClaudeUsageLabels.label(for: "weekly_scoped") == "Fable")
     #expect(ClaudeUsageLabels.label(for: "weekly_all") == "All models")
+}
+
+@Test
+func fullSettingsCardFitsInsideScreenVisibleFrame() {
+    struct InstalledScreen: ScreenDescribing {
+        var frameValue: CGRect
+        var visibleFrameValue: CGRect
+    }
+    let screen = InstalledScreen(
+        frameValue: CGRect(x: 0, y: 0, width: 1728, height: 1117),
+        visibleFrameValue: CGRect(x: 0, y: 47, width: 1728, height: 1037)
+    )
+
+    let cardRect = NotchGeometry.settingsCardScreenRect(
+        for: screen,
+        cellCount: 7,
+        edge: .right,
+        providerCount: 11,
+        routingToolCount: 2,
+        displayRowCount: 2
+    )
+
+    #expect(cardRect.minY >= screen.visibleFrameValue.minY, "bottom of settings card must not be clipped by the visible frame")
+    #expect(screen.visibleFrameValue.contains(cardRect), "visibleFrame must contain the entire settings card")
+}
+
+@Test
+func settingsRowsUseCompactMeasuredGeometrySoLowerProvidersRemainVisible() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let source = try String(
+        contentsOf: root.appendingPathComponent("Sources/NightCrawler/UI/SettingsView.swift"),
+        encoding: .utf8
+    )
+
+    #expect(source.contains(".frame(height: HUDLayout.settingsRowHeight)"))
+    #expect(source.contains("HUDLayout.settingsRowSpacing"))
 }

@@ -8,6 +8,7 @@ enum Palette {
 
     static let ample         = Color(hex: 0x00FF88)
     static let watch         = Color(hex: 0xF2FF00)
+    static let sessionWatch  = Color(hex: 0xFF9500)
     static let critical      = Color(hex: 0xFF3F00)
 
     static let textPrimary   = Color.white

@@ -3,19 +3,47 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var store: UsageStore
     let edge: NotchEdge
+    let isMiniModeEnabled: Bool
+    let isAutoHideEnabled: Bool
     let onEdgeChange: (NotchEdge) -> Void
+    let onMiniModeChange: (Bool) -> Void
+    let onAutoHideChange: (Bool) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Screen edge")
                 .font(Typography.cardTitle)
+                .frame(height: HUDLayout.settingsTitleHeight)
                 .foregroundStyle(Palette.textPrimary)
 
             EdgePicker(edge: edge, onSelect: onEdgeChange)
                 .padding(.top, HUDLayout.headerToBlock)
 
+            Text("Display")
+                .font(Typography.cardTitle)
+                .frame(height: HUDLayout.settingsTitleHeight)
+                .foregroundStyle(Palette.textPrimary)
+                .padding(.top, 2 * HUDLayout.blockSpacing)
+
+            SettingsToggleRow(
+                title: "Mini mode",
+                detail: "70% tab · expands on hover",
+                isOn: isMiniModeEnabled,
+                onToggle: { onMiniModeChange(!isMiniModeEnabled) }
+            )
+            .padding(.top, HUDLayout.headerToBlock)
+
+            SettingsToggleRow(
+                title: "Auto-hide",
+                detail: "Edge hover · ⌥⌘N",
+                isOn: isAutoHideEnabled,
+                onToggle: { onAutoHideChange(!isAutoHideEnabled) }
+            )
+            .padding(.top, HUDLayout.settingsRowSpacing)
+
             Text("Visible providers")
                 .font(Typography.cardTitle)
+                .frame(height: HUDLayout.settingsTitleHeight)
                 .foregroundStyle(Palette.textPrimary)
                 .padding(.top, 2 * HUDLayout.blockSpacing)
 
@@ -23,34 +51,102 @@ struct SettingsView: View {
                 SettingsProviderRow(
                     id: provider.id,
                     name: provider.label,
-                    isOn: store.enabledProviderIds.contains(provider.id),
+                    isOn: store.isProviderEnabled(provider.id),
                     canMoveUp: index > 0,
                     canMoveDown: index < store.providerCatalog.count - 1,
                     onToggle: { store.toggle(providerId: provider.id) },
                     onMoveUp: { store.moveProvider(provider.id, by: -1) },
                     onMoveDown: { store.moveProvider(provider.id, by: 1) }
                 )
-                .padding(.top, index == 0 ? HUDLayout.headerToBlock : HUDLayout.blockSpacing)
+                .padding(.top, index == 0 ? HUDLayout.headerToBlock : HUDLayout.settingsRowSpacing)
             }
 
+            Text("Copilot plan")
+                .font(Typography.cardTitle)
+                .frame(height: HUDLayout.settingsTitleHeight)
+                .foregroundStyle(Palette.textPrimary)
+                .padding(.top, 2 * HUDLayout.blockSpacing)
+
+            CopilotPlanPicker(
+                selectedLimit: store.copilotPlanLimit,
+                onSelect: store.setCopilotPlanLimit
+            )
+            .padding(.top, HUDLayout.headerToBlock)
+
             if !store.routingToolStates.isEmpty {
-                Text("Agent routing")
+                Text("Agent availability")
                     .font(Typography.cardTitle)
+                    .frame(height: HUDLayout.settingsTitleHeight)
                     .foregroundStyle(Palette.textPrimary)
                     .padding(.top, 2 * HUDLayout.blockSpacing)
 
-                ForEach(store.routingToolStates) { tool in
+                ForEach(Array(store.routingToolStates.enumerated()), id: \.element.id) { index, tool in
                     RoutingToolRow(
                         tool: tool,
-                        onToggleEnabled: { store.toggleRoutingTool(tool.id) },
                         onToggleAvailability: { store.toggleRoutingToolAvailability(tool.id) }
                     )
-                    .padding(.top, HUDLayout.headerToBlock)
+                    .padding(.top, index == 0 ? HUDLayout.headerToBlock : HUDLayout.settingsRowSpacing)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .foregroundStyle(Palette.textPrimary)
+    }
+}
+
+private struct SettingsToggleRow: View {
+    let title: String
+    let detail: String
+    let isOn: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(spacing: HUDLayout.headerGap) {
+                Text(title)
+                    .font(Typography.cardBody)
+                    .foregroundStyle(Palette.textPrimary)
+                Text(detail)
+                    .font(Typography.cardBody)
+                    .foregroundStyle(Palette.textSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                BespokeSwitch(isOn: isOn)
+            }
+            .frame(height: HUDLayout.settingsRowHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(isOn ? "On" : "Off")
+    }
+}
+
+private struct CopilotPlanPicker: View {
+    let selectedLimit: Int
+    let onSelect: (Int) -> Void
+
+    private let choices = [("Free", 50), ("Pro", 300), ("Pro+", 1_500)]
+
+    var body: some View {
+        HStack(spacing: Design.px(12)) {
+            ForEach(choices, id: \.1) { choice in
+                Button(action: { onSelect(choice.1) }) {
+                    Text("\(choice.0) · \(choice.1)")
+                        .font(Typography.cardBody)
+                        .foregroundStyle(selectedLimit == choice.1 ? Color.white : Palette.textSecondary)
+                        .padding(.horizontal, Design.px(13))
+                        .frame(height: HUDLayout.edgePickerHeight)
+                        .background(
+                            Capsule()
+                                .fill(selectedLimit == choice.1 ? Palette.ample : Palette.ringTrack)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Copilot \(choice.0) plan, \(choice.1) monthly premium requests")
+                .accessibilityValue(selectedLimit == choice.1 ? "Selected" : "Not selected")
+            }
+        }
     }
 }
 
@@ -123,6 +219,7 @@ private struct SettingsProviderRow: View {
             .accessibilityValue(isOn ? "On" : "Off")
             .accessibilityHint("Shows or hides this provider on the rail")
         }
+        .frame(height: HUDLayout.settingsRowHeight)
         .focusable()
     }
 
@@ -140,34 +237,24 @@ private struct SettingsProviderRow: View {
 
 private struct RoutingToolRow: View {
     let tool: RoutingToolState
-    let onToggleEnabled: () -> Void
     let onToggleAvailability: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Design.px(10)) {
-            HStack(spacing: HUDLayout.headerGap) {
-                ProviderGlyphView(glyph: ProviderGlyph.from(providerId: tool.id) ?? .third)
-                    .foregroundStyle(Palette.textPrimary)
-                    .frame(width: HUDLayout.glyphSize, height: HUDLayout.glyphSize)
-                Text(tool.label)
-                    .font(Typography.cardBody)
-                    .foregroundStyle(Palette.textPrimary)
-                Spacer(minLength: 0)
-                statusButton(
-                    title: tool.enabled ? "Enabled" : "Disabled",
-                    isOn: tool.enabled,
-                    action: onToggleEnabled
-                )
-            }
-            HStack {
-                Spacer(minLength: HUDLayout.glyphSize + HUDLayout.headerGap)
-                statusButton(
-                    title: tool.available ? "Available" : "Unavailable",
-                    isOn: tool.available,
-                    action: onToggleAvailability
-                )
-            }
+        HStack(spacing: HUDLayout.headerGap) {
+            ProviderGlyphView(glyph: ProviderGlyph.from(providerId: tool.id) ?? .third)
+                .foregroundStyle(Palette.textPrimary)
+                .frame(width: HUDLayout.glyphSize, height: HUDLayout.glyphSize)
+            Text(tool.label)
+                .font(Typography.cardBody)
+                .foregroundStyle(Palette.textPrimary)
+            Spacer(minLength: 0)
+            statusButton(
+                title: tool.available ? "Available" : "Unavailable",
+                isOn: tool.available,
+                action: onToggleAvailability
+            )
         }
+        .frame(height: HUDLayout.settingsRowHeight)
         .focusable()
     }
 

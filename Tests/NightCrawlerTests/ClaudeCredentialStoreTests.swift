@@ -4,7 +4,10 @@ import Testing
 
 private let sampleToken = "test-subscription-token"
 
-private func credentialJSON(token: String = sampleToken, expiresAt: Double = (Date().timeIntervalSince1970 + 3600) * 1000) -> Data {
+private func credentialJSON(
+    token: String = sampleToken,
+    expiresAt: Double = (Date().timeIntervalSince1970 + 3600) * 1000
+) -> Data {
     let payload: [String: Any] = [
         "claudeAiOauth": [
             "accessToken": token,
@@ -15,68 +18,83 @@ private func credentialJSON(token: String = sampleToken, expiresAt: Double = (Da
     return try! JSONSerialization.data(withJSONObject: payload)
 }
 
-private final class SpyRunner: @unchecked Sendable {
-    var invocations: [SecurityInvocation] = []
-    var result = SecurityRunResult(exitCode: 0, stdout: credentialJSON())
+private final class ReaderSpy: @unchecked Sendable {
+    var reads = 0
+    var data: Data? = credentialJSON()
 
-    func run(_ invocation: SecurityInvocation) -> SecurityRunResult {
-        invocations.append(invocation)
-        return result
+    func read(_: URL) -> Data? {
+        reads += 1
+        return data
     }
 }
 
 @Test
-func claudeCredentialReaderNeverPutsTokenInArgv() async throws {
-    let spy = SpyRunner()
-    let store = ClaudeCredentialStore(runner: spy.run)
-    let token = await store.read()
-    #expect(token == sampleToken)
-    let invocation = try #require(spy.invocations.first)
-    #expect(invocation.executable == "/usr/bin/security")
-    #expect(invocation.arguments == ["find-generic-password", "-s", "Claude Code-credentials", "-w"])
-    #expect(!invocation.arguments.contains(sampleToken))
-    #expect(!invocation.executable.contains(sampleToken))
-    #expect(invocation.stdinClosed)
-    #expect(invocation.stderrDiscarded)
-    #expect(invocation.timeout <= 8)
-    #expect(Set(invocation.environment.keys).isSubset(of: ["HOME", "PATH", "LANG", "TMPDIR"]))
+func claudeUsesItsExistingCredentialFileWithoutAKeychainPrompt() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let source = try String(
+        contentsOf: root.appendingPathComponent("Sources/NightCrawler/Providers/ClaudeCredentialStore.swift"),
+        encoding: .utf8
+    )
+
+    #expect(source.contains(".claude/.credentials.json"))
+    #expect(!source.contains("/usr/bin/security"))
+}
+
+@Test
+func claudeCredentialReaderReturnsValidatedFileToken() async {
+    let spy = ReaderSpy()
+    let store = ClaudeCredentialStore(fileURL: URL(fileURLWithPath: "/fixture"), reader: spy.read)
+    #expect(await store.read() == sampleToken)
+    #expect(spy.reads == 1)
 }
 
 @Test
 func claudeRepeatedPollsDoNotRereadCredentials() async {
-    let spy = SpyRunner()
-    let store = ClaudeCredentialStore(runner: spy.run)
+    let spy = ReaderSpy()
+    let store = ClaudeCredentialStore(fileURL: URL(fileURLWithPath: "/fixture"), reader: spy.read)
     #expect(await store.read() == sampleToken)
     #expect(await store.read() == sampleToken)
-    #expect(spy.invocations.count == 1)
+    #expect(spy.reads == 1)
 }
 
 @Test
-func claudeRecordedRefusalDoesNotRerunCredentialRead() async {
-    let spy = SpyRunner()
-    spy.result = SecurityRunResult(exitCode: 1, stdout: Data())
-    let store = ClaudeCredentialStore(runner: spy.run)
+func claudeMissingCredentialFileIsNotRereadUntilExplicitRetry() async {
+    let spy = ReaderSpy()
+    spy.data = nil
+    let store = ClaudeCredentialStore(fileURL: URL(fileURLWithPath: "/fixture"), reader: spy.read)
     #expect(await store.read() == nil)
     #expect(await store.read() == nil)
-    #expect(spy.invocations.count == 1)
-}
-
-@Test
-func claudeExplicitRetryRereadsCredentials() async {
-    let spy = SpyRunner()
-    let store = ClaudeCredentialStore(runner: spy.run)
-    #expect(await store.read() == sampleToken)
+    #expect(spy.reads == 1)
     await store.allowRetry()
-    #expect(await store.read() == sampleToken)
-    #expect(spy.invocations.count == 2)
+    #expect(await store.read() == nil)
+    #expect(spy.reads == 2)
 }
 
 @Test
-func claudeSourceChangeRereadsCredentials() async {
-    let spy = SpyRunner()
-    let store = ClaudeCredentialStore(runner: spy.run)
-    #expect(await store.read() == sampleToken)
-    await store.noteSourceChange()
-    #expect(await store.read() == sampleToken)
-    #expect(spy.invocations.count == 2)
+func claudeExpiredCredentialIsRejected() async {
+    let spy = ReaderSpy()
+    spy.data = credentialJSON(expiresAt: (Date().timeIntervalSince1970 - 1) * 1000)
+    let store = ClaudeCredentialStore(fileURL: URL(fileURLWithPath: "/fixture"), reader: spy.read)
+    #expect(await store.read() == nil)
+}
+
+@MainActor
+@Test
+func scheduledPollInvalidatesTheCachedClaudeCredential() async {
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let spy = ReaderSpy()
+    let credentials = ClaudeCredentialStore(fileURL: URL(fileURLWithPath: "/fixture"), reader: spy.read)
+    #expect(await credentials.read() == sampleToken)
+    spy.data = credentialJSON(token: "rotated-subscription-token")
+    let usage = UsageStore(providers: [], defaults: defaults, claudeCredentials: credentials)
+
+    await usage.poll()
+
+    #expect(await credentials.read() == "rotated-subscription-token")
+    #expect(spy.reads == 2)
 }

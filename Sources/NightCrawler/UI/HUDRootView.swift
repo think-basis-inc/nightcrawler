@@ -3,13 +3,21 @@ import SwiftUI
 struct HUDRootView: View {
     @EnvironmentObject var store: UsageStore
     @Binding var surface: HUDSurfaceState
+    @Binding var isExternallyHovered: Bool
     var edge: NotchEdge
+    var isMiniModeEnabled: Bool = false
+    var isAutoHideEnabled: Bool = false
+    var railFitScale: CGFloat = 1
     var onSelect: (UsageReading) -> Void
     var onSettings: () -> Void
     var onEdgeChange: (NotchEdge) -> Void
+    var onMiniModeChange: (Bool) -> Void = { _ in }
+    var onAutoHideChange: (Bool) -> Void = { _ in }
+    var onHoverChange: (Bool) -> Void = { _ in }
     var onDismiss: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hoveringRail = false
     @State private var hoveringSettings = false
 
     var body: some View {
@@ -36,6 +44,13 @@ struct HUDRootView: View {
     private var notchSize: CGSize {
         NotchPlacement.panelSize(edge: edge, length: shapeLength, depth: notchDepth)
     }
+    private var tabScale: CGFloat {
+        HUDLayout.railScale(
+            miniMode: isMiniModeEnabled,
+            isHovered: hoveringRail || hoveringSettings || isExternallyHovered,
+            fitScale: railFitScale
+        )
+    }
 
     private func rail(_ place: NotchPlacement) -> some View {
         SideNotchShape(edge: edge)
@@ -45,6 +60,14 @@ struct HUDRootView: View {
                 cells.padding(bezelSide, 0)
             }
             .clipShape(SideNotchShape(edge: edge))
+            .contentShape(SideNotchShape(edge: edge))
+            .onHover { isHovered in
+                hoveringRail = isHovered
+                isExternallyHovered = isHovered
+                onHoverChange(isHovered)
+            }
+            .scaleEffect(tabScale, anchor: tabScaleAnchor)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: tabScale)
             .position(place.point(
                 along: slack + shapeLength / 2,
                 across: notchDepth / 2
@@ -97,12 +120,32 @@ struct HUDRootView: View {
         }
             .buttonStyle(.plain)
             .contentShape(Circle())
+            .scaleEffect(tabScale)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: tabScale)
             .position(place.point(
-                along: slack + shapeLength,
-                across: HUDLayout.orbInsetFromEdge
+                along: scaledTabAlong(slack + shapeLength),
+                across: HUDLayout.orbInsetFromEdge * tabScale
             ))
-            .onHover { hoveringSettings = $0 }
+            .onHover { isHovered in
+                hoveringSettings = isHovered
+                isExternallyHovered = isHovered
+                onHoverChange(isHovered)
+            }
             .accessibilityLabel("Settings")
+    }
+
+    private var tabScaleAnchor: UnitPoint {
+        switch edge {
+        case .right: return .trailing
+        case .left: return .leading
+        case .top: return .top
+        case .bottom: return .bottom
+        }
+    }
+
+    private func scaledTabAlong(_ along: CGFloat) -> CGFloat {
+        let railCenter = slack + shapeLength / 2
+        return railCenter + (along - railCenter) * tabScale
     }
 
     private enum Slideout {
@@ -146,7 +189,7 @@ struct HUDRootView: View {
             }
         }()
         let cardAlong = edge.isVertical ? HUDLayout.cardWidth : height
-        let along = slack + HUDLayout.ringCenter(index: index, edge: edge)
+        let along = scaledTabAlong(slack + HUDLayout.ringCenter(index: index, edge: edge))
         let center = HUDLayout.attachedSlideoutCenter(
             edge: edge,
             panelSize: place.panelSize,
@@ -157,12 +200,25 @@ struct HUDRootView: View {
             slack: slack
         )
 
-        SlideoutShell(height: height, direction: direction) {
+        SlideoutShell(
+            height: height,
+            direction: direction,
+            onHoverChange: onHoverChange
+        ) {
             switch content {
             case .detail(let reading):
                 DetailPanelView(reading: reading, onClose: onDismiss)
             case .settings:
-                SettingsView(edge: edge, onEdgeChange: onEdgeChange)
+                ScrollView(.vertical) {
+                    SettingsView(
+                        edge: edge,
+                        isMiniModeEnabled: isMiniModeEnabled,
+                        isAutoHideEnabled: isAutoHideEnabled,
+                        onEdgeChange: onEdgeChange,
+                        onMiniModeChange: onMiniModeChange,
+                        onAutoHideChange: onAutoHideChange
+                    )
+                }
             }
         }
         .position(center)
@@ -174,10 +230,14 @@ struct HUDRootView: View {
 private struct SlideoutShell<Content: View>: View {
     let height: CGFloat
     let direction: NotchEdge.TooltipDirection
+    var onHoverChange: (Bool) -> Void = { _ in }
     @ViewBuilder let content: Content
 
     var body: some View {
-        let tailSize = LiquidNeck.size(for: direction)
+        let cardAlong = direction == .leading || direction == .trailing
+            ? height
+            : HUDLayout.cardWidth
+        let tailSize = LiquidNeck.size(for: direction, cardAlong: cardAlong)
         let card = content
             .padding(HUDLayout.cardPadding)
             .frame(width: HUDLayout.cardWidth, height: height, alignment: .topLeading)
@@ -191,15 +251,18 @@ private struct SlideoutShell<Content: View>: View {
             .fill(Palette.card)
             .frame(width: tailSize.width, height: tailSize.height)
 
-        switch direction {
-        case .leading:
-            HStack(spacing: 0) { card; tail }
-        case .trailing:
-            HStack(spacing: 0) { tail; card }
-        case .down:
-            VStack(spacing: 0) { tail; card }
-        case .up:
-            VStack(spacing: 0) { card; tail }
+        Group {
+            switch direction {
+            case .leading:
+                HStack(spacing: 0) { card; tail }
+            case .trailing:
+                HStack(spacing: 0) { tail; card }
+            case .down:
+                VStack(spacing: 0) { tail; card }
+            case .up:
+                VStack(spacing: 0) { card; tail }
+            }
         }
+        .onHover { onHoverChange($0) }
     }
 }

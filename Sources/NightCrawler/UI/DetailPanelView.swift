@@ -92,7 +92,7 @@ struct WindowRow: View {
             }
             .padding(.top, HUDLayout.labelToBar)
 
-            Text("\(Int(window.usedPercent))% Used")
+            Text("\(ProviderIcon.percentageText(for: window)) Used")
                 .font(Typography.cardBody)
                 .foregroundStyle(Palette.textPrimary)
                 .padding(.top, HUDLayout.barToUsed)

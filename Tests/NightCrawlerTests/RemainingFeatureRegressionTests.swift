@@ -29,11 +29,13 @@ func providerOrderAndRoutingStatePersistAcrossRestart() {
     first.moveProvider("gamma", by: -2)
     first.toggleRoutingTool("cubic")
     first.toggleRoutingToolAvailability("cubic")
+    first.setCopilotPlanLimit(1_500)
 
     let restarted = UsageStore(providers: providers, defaults: defaults)
     #expect(restarted.providerOrder == ["gamma", "alpha", "beta"])
     #expect(restarted.routingToolStates.first?.enabled == true)
     #expect(restarted.routingToolStates.first?.available == true)
+    #expect(restarted.copilotPlanLimit == 1_500)
 }
 
 @MainActor
@@ -157,10 +159,14 @@ func capacitySnapshotSeparatesEnabledAvailableAndCapacityWithoutCredentials() th
     let defaults = UserDefaults(suiteName: suiteName)!
     defer { defaults.removePersistentDomain(forName: suiteName) }
     let store = UsageStore(
-        providers: [CatalogProvider(id: "cursor", label: "Cursor")],
+        providers: [
+            CatalogProvider(id: "cursor", label: "Cursor"),
+            CatalogProvider(id: "cubic", label: "Cubic"),
+        ],
         defaults: defaults
     )
     store.enabledProviderIds = ["cursor"]
+    store.toggleRoutingTool("cubic")
     store.readings = [
         UsageReading(
             providerId: "cursor",
@@ -183,6 +189,27 @@ func capacitySnapshotSeparatesEnabledAvailableAndCapacityWithoutCredentials() th
             observedAt: Date(),
             error: nil
         ),
+        UsageReading(
+            providerId: "cubic",
+            label: "Cubic",
+            accountId: nil,
+            authMode: "unknown",
+            source: "cubic_github_check",
+            windows: [
+                UsageWindow(
+                    id: "reviewed_lines",
+                    label: "Monthly reviewed lines",
+                    used: 302_778,
+                    limit: 300_000,
+                    usedPercent: 100.926,
+                    windowMinutes: nil,
+                    resetsAt: nil
+                ),
+            ],
+            status: .live,
+            observedAt: Date().addingTimeInterval(-3600),
+            error: "Last reported by Cubic; not a live balance"
+        ),
     ]
 
     let snapshot = CapacitySnapshot.make(from: store)
@@ -192,9 +219,12 @@ func capacitySnapshotSeparatesEnabledAvailableAndCapacityWithoutCredentials() th
     #expect(cursor?.available == .available)
     #expect(cursor?.capacity.status == .live)
     #expect(cursor?.capacity.windows.first?.usedPercent == 25)
-    #expect(cubic?.enabled == false)
+    #expect(cubic?.enabled == true)
     #expect(cubic?.available == .unavailable)
-    #expect(cubic?.capacity.status == .unknown)
+    #expect(cubic?.capacity.status == .live)
+    #expect(cubic?.capacity.windows.first?.usedPercent == 100.926)
+    #expect(snapshot.resources.map(\.id).filter { $0 == "cubic" }.count == 1)
+    #expect(cubic?.kind == .routingTool)
 
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
@@ -202,6 +232,34 @@ func capacitySnapshotSeparatesEnabledAvailableAndCapacityWithoutCredentials() th
     #expect(!json.contains("must-not-escape"))
     #expect(!json.contains("secret-auth-mode"))
     #expect(!json.contains("accountId"))
+}
+
+@MainActor
+@Test
+func routingAvailabilityAndQuotaFreshnessRemainSeparateSignals() throws {
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = UsageStore(providers: [CatalogProvider(id: "devin", label: "Devin")], defaults: defaults)
+    let observedAt = Date().addingTimeInterval(-600)
+    store.readings = [
+        UsageReading(
+            providerId: "devin",
+            label: "Devin",
+            accountId: nil,
+            authMode: "subscription",
+            source: "fixture",
+            windows: [UsageWindow(id: "weekly", label: "Weekly", used: 800, limit: 10_000, usedPercent: 8, windowMinutes: 10_080, resetsAt: nil)],
+            status: .live,
+            observedAt: observedAt,
+            error: nil
+        ),
+    ]
+
+    let resource = try #require(CapacitySnapshot.make(from: store).resources.first { $0.id == "devin" })
+    #expect(resource.available == .available)
+    #expect(resource.capacity.freshness == .stale)
+    #expect(resource.capacity.windows.first?.usedPercent == 8)
 }
 
 @MainActor
@@ -216,10 +274,57 @@ func capacityHTTPIsReadOnlyAndServesTheVersionedRoute() {
         for: Data("POST /v1/capacity HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".utf8),
         snapshot: snapshot
     )
+    let foreignHost = LocalCapacityHTTP.response(
+        for: Data("GET /v1/capacity HTTP/1.1\r\nHost: example.com\r\n\r\n".utf8),
+        snapshot: snapshot
+    )
 
     #expect(String(decoding: get, as: UTF8.self).hasPrefix("HTTP/1.1 200 OK"))
     #expect(String(decoding: get, as: UTF8.self).contains("\"schemaVersion\":1"))
     #expect(String(decoding: post, as: UTF8.self).hasPrefix("HTTP/1.1 405 Method Not Allowed"))
+    #expect(String(decoding: foreignHost, as: UTF8.self).hasPrefix("HTTP/1.1 403 Forbidden"))
+}
+
+@Test
+func onlyAntigravityUsesTheKeychainDenialPath() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let source = try String(
+        contentsOf: root.appendingPathComponent("Sources/NightCrawler/Model/UsageStore.swift"),
+        encoding: .utf8
+    )
+
+    #expect(source.contains("keychainProviderIds: Set<String> = [\"antigravity\"]"))
+}
+
+@Test
+func capacitySnapshotCannotTrapOnDuplicateProviderReadings() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let source = try String(
+        contentsOf: root.appendingPathComponent("Sources/NightCrawler/Routing/CapacitySnapshot.swift"),
+        encoding: .utf8
+    )
+
+    #expect(source.contains("uniquingKeysWith:"))
+}
+
+@Test
+func codexBackendErrorsRetainTheLatestSessionReading() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let source = try String(
+        contentsOf: root.appendingPathComponent("Sources/NightCrawler/Providers/CodexCLIUsageProvider.swift"),
+        encoding: .utf8
+    )
+
+    #expect(source.contains("guard http.statusCode == 200 else {\n                return sessionReading"))
 }
 
 @MainActor

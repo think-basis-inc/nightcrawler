@@ -101,3 +101,21 @@ func copilotBadResetStaysUnknownNotInvented() throws {
         #expect(window.usedPercent == 30)
     }
 }
+
+@Test
+func copilotBillingUsageBecomesMonthlyUsedPercentage() throws {
+    let raw: [String: Any] = [
+        "usageItems": [
+            ["product": "Copilot", "grossQuantity": 41.0],
+            ["product": "Actions", "grossQuantity": 999.0],
+        ]
+    ]
+    let now = try #require(ISO8601DateFormatter().date(from: "2026-09-07T12:00:00Z"))
+
+    let result = CopilotQuotaParser.parseBilling(raw, planLimit: 300, now: now)
+    let window = try #require(result.windows.first)
+    #expect(result.status == .live)
+    #expect(window.label == "Monthly premium requests")
+    #expect(abs(window.usedPercent - 13.6666666667) < 0.000001)
+    #expect(window.resetsAt == ISO8601DateFormatter().date(from: "2026-10-01T00:00:00Z"))
+}

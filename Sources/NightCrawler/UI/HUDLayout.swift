@@ -15,7 +15,7 @@ enum HUDLayout {
     static let ringLabelGap = Design.px(26.9)
     static let percentLineHeight = Design.px(27)
     static let tailLength = Design.px(75)
-    static let tailHeight = Design.px(87)
+    static let tailHeight = Design.px(320)
     static let tailGap: CGFloat = 0
     static let cardWidth = Design.px(600)
     static let cardCorner = Design.px(49.5)
@@ -35,6 +35,15 @@ enum HUDLayout {
     static let cardBodyLineHeight = Design.px(25)
     static let cardTitleLineHeight = Design.px(36)
     static let edgePickerHeight = Design.px(42)
+    static let settingsRowHeight = max(glyphSize, Design.px(30))
+    static let settingsTitleHeight: CGFloat = 18
+    static let settingsRowSpacing = Design.px(12)
+    static let compactRailScale: CGFloat = 0.70
+
+    static func railScale(miniMode: Bool, isHovered: Bool, fitScale: CGFloat = 1) -> CGFloat {
+        let fitted = min(max(fitScale, 0), 1)
+        return miniMode && !isHovered ? min(compactRailScale, fitted) : fitted
+    }
 
     static func bodyDepth(for edge: NotchEdge) -> CGFloat {
         edge.isVertical ? sideBodyDepth : 2 * sideRingMargin + cellExtent
@@ -74,6 +83,16 @@ enum HUDLayout {
         bodyLength(cellCount: cellCount, edge: edge) + 2 * flare
     }
 
+    static func requiredRailLength(cellCount: Int, edge: NotchEdge) -> CGFloat {
+        shapeLength(cellCount: cellCount, edge: edge) + orbDiameter / 2
+    }
+
+    static func railFitScale(cellCount: Int, edge: NotchEdge, availableLength: CGFloat) -> CGFloat {
+        let required = requiredRailLength(cellCount: cellCount, edge: edge)
+        guard required > 0 else { return 1 }
+        return min(1, max(availableLength, 0) / required)
+    }
+
     static func ringCenter(index: Int, edge: NotchEdge = .right, flare: CGFloat = curlRadius) -> CGFloat {
         flare + padStart(for: edge) + ringDiameter / 2 + CGFloat(index) * cellPitch(for: edge)
     }
@@ -102,23 +121,33 @@ enum HUDLayout {
         return height
     }
 
-    static func settingsCardHeight(providerCount: Int, routingToolCount: Int) -> CGFloat {
-        let rowHeight = max(glyphSize, Design.px(30))
-        let edgeSection = cardTitleLineHeight + headerToBlock + edgePickerHeight + 2 * blockSpacing
-        let providerRows = CGFloat(max(providerCount, 0)) * rowHeight
-            + CGFloat(max(providerCount - 1, 0)) * blockSpacing
-        let routingRowHeight = 2 * rowHeight + Design.px(10)
-        let routingRows = CGFloat(max(routingToolCount, 0)) * routingRowHeight
-            + CGFloat(max(routingToolCount - 1, 0)) * blockSpacing
+    static func settingsCardHeight(
+        providerCount: Int,
+        routingToolCount: Int,
+        displayRowCount: Int = 2
+    ) -> CGFloat {
+        let edgeSection = settingsTitleHeight + headerToBlock + edgePickerHeight + 2 * blockSpacing
+        let providerRows = CGFloat(max(providerCount, 0)) * settingsRowHeight
+            + CGFloat(max(providerCount - 1, 0)) * settingsRowSpacing
+        let copilotSection = 2 * blockSpacing + settingsTitleHeight + headerToBlock + edgePickerHeight
+        let routingRows = CGFloat(max(routingToolCount, 0)) * settingsRowHeight
+            + CGFloat(max(routingToolCount - 1, 0)) * settingsRowSpacing
         let routingSection = routingToolCount > 0
-            ? 2 * blockSpacing + cardTitleLineHeight + headerToBlock + routingRows
+            ? 2 * blockSpacing + settingsTitleHeight + headerToBlock + routingRows
             : 0
-        return 2 * cardPadding + edgeSection + cardTitleLineHeight + headerToBlock + providerRows + routingSection
+        let displayRows = CGFloat(max(displayRowCount, 0)) * settingsRowHeight
+            + CGFloat(max(displayRowCount - 1, 0)) * settingsRowSpacing
+        let displaySection = displayRowCount > 0
+            ? 2 * blockSpacing + settingsTitleHeight + headerToBlock + displayRows
+            : 0
+        let contentHeight = edgeSection + settingsTitleHeight + headerToBlock
+            + providerRows + copilotSection + routingSection + displaySection
+        return 2 * cardPadding + contentHeight.rounded(.up)
     }
 
     static let defaultMaxCardHeight = max(
         cardHeight(windowCount: 4),
-        settingsCardHeight(providerCount: 9, routingToolCount: 2)
+        settingsCardHeight(providerCount: 11, routingToolCount: 2)
     )
 
     static func panelSize(cellCount: Int, edge: NotchEdge) -> CGSize {

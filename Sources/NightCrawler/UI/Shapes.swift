@@ -74,8 +74,7 @@ struct SideNotchShape: Shape {
     }
 }
 
-/// A pinched tendril that makes the card read as liquid plastic pulled from one
-/// small spot into the rail, rather than a triangular or full-edge funnel.
+/// A single teardrop pulled from the card until its tip touches the rail.
 struct LiquidNeck: Shape {
     let direction: NotchEdge.TooltipDirection
 
@@ -98,50 +97,34 @@ struct LiquidNeck: Shape {
         }
 
         let canonical = CGRect(origin: .zero, size: canonicalSize)
-        let rootHalf = min(canonical.height * 0.17, Design.px(18))
-        let swellHalf = min(canonical.height * 0.22, Design.px(24))
-        let tipHalf = min(canonical.height * 0.14, Design.px(15))
-        let rootTop = canonical.midY - rootHalf
-        let rootBottom = canonical.midY + rootHalf
-        let swellTop = canonical.midY - swellHalf
-        let swellBottom = canonical.midY + swellHalf
-        let tipTop = canonical.midY - tipHalf
-        let tipBottom = canonical.midY + tipHalf
-        let swellX = canonical.width * 0.44
+        let anchorHalf = canonical.height * 0.44
+        let anchorTop = canonical.midY - anchorHalf
+        let anchorBottom = canonical.midY + anchorHalf
 
         var path = Path()
-        path.move(to: CGPoint(x: canonical.minX, y: rootTop))
+        path.move(to: CGPoint(x: canonical.minX, y: anchorTop))
         path.addCurve(
-            to: CGPoint(x: swellX, y: swellTop),
-            control1: CGPoint(x: canonical.width * 0.14, y: rootTop),
-            control2: CGPoint(x: canonical.width * 0.27, y: swellTop)
+            to: CGPoint(x: canonical.maxX, y: canonical.midY),
+            control1: CGPoint(x: canonical.width * 0.08, y: canonical.midY - canonical.height * 0.08),
+            control2: CGPoint(x: canonical.width * 0.62, y: canonical.midY)
         )
         path.addCurve(
-            to: CGPoint(x: canonical.maxX, y: tipTop),
-            control1: CGPoint(x: canonical.width * 0.68, y: swellTop),
-            control2: CGPoint(x: canonical.width * 0.86, y: tipTop)
-        )
-        path.addLine(to: CGPoint(x: canonical.maxX, y: tipBottom))
-        path.addCurve(
-            to: CGPoint(x: swellX, y: swellBottom),
-            control1: CGPoint(x: canonical.width * 0.86, y: tipBottom),
-            control2: CGPoint(x: canonical.width * 0.68, y: swellBottom)
-        )
-        path.addCurve(
-            to: CGPoint(x: canonical.minX, y: rootBottom),
-            control1: CGPoint(x: canonical.width * 0.27, y: swellBottom),
-            control2: CGPoint(x: canonical.width * 0.14, y: rootBottom)
+            to: CGPoint(x: canonical.minX, y: anchorBottom),
+            control1: CGPoint(x: canonical.width * 0.62, y: canonical.midY),
+            control2: CGPoint(x: canonical.width * 0.08, y: canonical.midY + canonical.height * 0.08)
         )
         path.closeSubpath()
         return path.applying(transform)
     }
 
-    static func size(for direction: NotchEdge.TooltipDirection) -> CGSize {
+    static func size(for direction: NotchEdge.TooltipDirection, cardAlong: CGFloat) -> CGSize {
+        let straightCardEdge = max(0, cardAlong - 2 * HUDLayout.cardCorner)
+        let rootLength = min(HUDLayout.tailHeight, straightCardEdge)
         switch direction {
         case .leading, .trailing:
-            return CGSize(width: HUDLayout.tailLength, height: HUDLayout.tailHeight)
+            return CGSize(width: HUDLayout.tailLength, height: rootLength)
         case .up, .down:
-            return CGSize(width: HUDLayout.tailHeight, height: HUDLayout.tailLength)
+            return CGSize(width: rootLength, height: HUDLayout.tailLength)
         }
     }
 }

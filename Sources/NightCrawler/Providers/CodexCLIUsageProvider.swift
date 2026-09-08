@@ -7,14 +7,26 @@ struct CodexCLIUsageProvider: UsageProvider {
     let label = "Codex CLI"
 
     private static let authPath = ("~/.codex/auth.json" as NSString).expandingTildeInPath
+    private let sessionUsage: CodexSessionUsageReader
+
+    init(sessionUsage: CodexSessionUsageReader = CodexSessionUsageReader()) {
+        self.sessionUsage = sessionUsage
+    }
 
     var isAvailable: Bool {
         loadCredentials() != nil
     }
 
     func read() async -> UsageReading {
+        let sessionReading = sessionUsage.read()
+        if let sessionReading,
+           let observedAt = sessionReading.observedAt,
+           Date().timeIntervalSince(observedAt) < 15 * 60 {
+            return sessionReading
+        }
         guard let credentials = loadCredentials() else {
-            return makeReading(status: .needsAuth, error: "Sign in to Codex CLI to read usage")
+            return sessionReading
+                ?? makeReading(status: .needsAuth, error: "Sign in to Codex CLI to read usage")
         }
 
         var request = URLRequest(
@@ -33,10 +45,12 @@ struct CodexCLIUsageProvider: UsageProvider {
                 return makeReading(status: .error("Bad response"))
             }
             if http.statusCode == 401 || http.statusCode == 403 {
-                return makeReading(status: .needsAuth, error: "Codex CLI session expired")
+                return sessionReading
+                    ?? makeReading(status: .needsAuth, error: "Codex CLI session expired")
             }
             guard http.statusCode == 200 else {
-                return makeReading(status: .error("ChatGPT returned \(http.statusCode)"))
+                return sessionReading
+                    ?? makeReading(status: .error("ChatGPT returned \(http.statusCode)"))
             }
 
             let decoder = JSONDecoder()
@@ -58,7 +72,8 @@ struct CodexCLIUsageProvider: UsageProvider {
                 error: nil
             )
         } catch {
-            return makeReading(status: .error("Codex usage request failed"))
+            return sessionReading
+                ?? makeReading(status: .error("Codex usage request failed"))
         }
     }
 
@@ -115,8 +130,8 @@ struct CodexCLIUsageProvider: UsageProvider {
         func windows(now: Date = Date()) -> [UsageWindow] {
             var result: [UsageWindow] = []
             let pairs: [(String, String, Window?)] = [
-                ("primary", "Current session", rateLimit?.primaryWindow),
-                ("secondary", label(for: rateLimit?.secondaryWindow?.limitWindowSeconds), rateLimit?.secondaryWindow),
+                ("primary", CodexUsageLabels.label(windowSeconds: rateLimit?.primaryWindow?.limitWindowSeconds), rateLimit?.primaryWindow),
+                ("secondary", CodexUsageLabels.label(windowSeconds: rateLimit?.secondaryWindow?.limitWindowSeconds), rateLimit?.secondaryWindow),
             ]
             for (id, label, window) in pairs {
                 guard let window, let percent = window.usedPercent else { continue }
@@ -134,18 +149,21 @@ struct CodexCLIUsageProvider: UsageProvider {
             }
             return result
         }
+    }
+}
 
-        private func label(for seconds: Double?) -> String {
-            guard let seconds, seconds > 0 else { return "Longer window" }
-            let minutes = seconds / 60
-            if minutes < 60 { return "\(Int(minutes))m limit" }
-            if minutes < 60 * 24 { return "\(Int(minutes / 60))h limit" }
-            let days = Int((minutes / (60 * 24)).rounded())
-            switch days {
-            case 7: return "Weekly limit"
-            case 30: return "Monthly limit"
-            default: return "\(days)d limit"
-            }
+enum CodexUsageLabels {
+    static func label(windowSeconds seconds: Double?) -> String {
+        guard let seconds, seconds > 0 else { return "Usage limit" }
+        if abs(seconds - 18_000) < 60 { return "Current session" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(Int(minutes))m limit" }
+        if minutes < 60 * 24 { return "\(Int(minutes / 60))h limit" }
+        let days = Int((minutes / (60 * 24)).rounded())
+        switch days {
+        case 7: return "Weekly limit"
+        case 30: return "Monthly limit"
+        default: return "\(days)d limit"
         }
     }
 }

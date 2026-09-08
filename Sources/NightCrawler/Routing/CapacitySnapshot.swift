@@ -1,50 +1,46 @@
 import Foundation
 
 struct CapacitySnapshot: Codable, Equatable, Sendable {
+    static let liveFreshnessInterval: TimeInterval = 120
     let schemaVersion: Int
     let generatedAt: Date
     let resources: [CapacityResource]
 
     @MainActor
     static func make(from store: UsageStore, now: Date = Date()) -> CapacitySnapshot {
-        let readings = Dictionary(uniqueKeysWithValues: store.readings.map { ($0.providerId, $0) })
-        var resources = store.providerCatalog.enumerated().map { index, provider in
-            CapacityResource(
+        let readings = Dictionary(
+            store.readings.map { ($0.providerId, $0) },
+            uniquingKeysWith: { _, latest in latest }
+        )
+        let routingTools = Dictionary(
+            store.routingToolStates.map { ($0.id, $0) },
+            uniquingKeysWith: { _, latest in latest }
+        )
+        let resources = store.providerCatalog.enumerated().map { index, provider in
+            let tool = routingTools[provider.id]
+            return CapacityResource(
                 id: provider.id,
                 label: provider.label,
-                kind: .usageProvider,
+                kind: tool == nil ? .usageProvider : .routingTool,
                 priority: index,
-                enabled: store.enabledProviderIds.contains(provider.id),
-                available: availability(for: readings[provider.id]),
+                enabled: tool?.enabled ?? store.enabledProviderIds.contains(provider.id),
+                available: tool.map {
+                    $0.available ? .available : .unavailable
+                } ?? availability(for: readings[provider.id], now: now),
                 capacity: capacity(for: readings[provider.id], now: now)
             )
         }
 
-        resources.append(contentsOf: store.routingToolStates.enumerated().map { index, tool in
-            CapacityResource(
-                id: tool.id,
-                label: tool.label,
-                kind: .routingTool,
-                priority: index,
-                enabled: tool.enabled,
-                available: tool.available ? .available : .unavailable,
-                capacity: CapacityState(
-                    status: .unknown,
-                    freshness: .unknown,
-                    observedAt: nil,
-                    windows: [],
-                    message: "No authoritative quota source"
-                )
-            )
-        })
-
         return CapacitySnapshot(schemaVersion: 1, generatedAt: now, resources: resources)
     }
 
-    private static func availability(for reading: UsageReading?) -> ResourceAvailability {
+    private static func availability(for reading: UsageReading?, now: Date) -> ResourceAvailability {
         guard let reading else { return .unknown }
         switch reading.status {
-        case .live, .unknown: return .available
+        case .live:
+            guard let observedAt = reading.observedAt else { return .unknown }
+            return now.timeIntervalSince(observedAt) <= liveFreshnessInterval ? .available : .unknown
+        case .unknown: return .available
         case .needsAuth, .error: return .unavailable
         }
     }
@@ -69,7 +65,7 @@ struct CapacitySnapshot: Codable, Equatable, Sendable {
         }
         let freshness: CapacityFreshness
         if let observedAt = reading.observedAt {
-            freshness = now.timeIntervalSince(observedAt) <= 120 ? .fresh : .stale
+            freshness = now.timeIntervalSince(observedAt) <= liveFreshnessInterval ? .fresh : .stale
         } else {
             freshness = .unknown
         }
@@ -77,12 +73,21 @@ struct CapacitySnapshot: Codable, Equatable, Sendable {
             status: status,
             freshness: freshness,
             observedAt: reading.observedAt,
-            windows: reading.windows.map {
-                CapacityWindow(
-                    id: $0.id,
-                    label: $0.label,
-                    usedPercent: $0.usedPercent,
-                    resetsAt: $0.resetsAt
+            windows: reading.windows.map { window in
+                let observedAt = window.observedAt ?? reading.observedAt
+                let freshness: CapacityFreshness
+                if let observedAt {
+                    freshness = now.timeIntervalSince(observedAt) <= liveFreshnessInterval ? .fresh : .stale
+                } else {
+                    freshness = .unknown
+                }
+                return CapacityWindow(
+                    id: window.id,
+                    label: window.label,
+                    usedPercent: window.usedPercent,
+                    resetsAt: window.resetsAt,
+                    observedAt: observedAt,
+                    freshness: freshness
                 )
             },
             message: reading.error
@@ -137,4 +142,6 @@ struct CapacityWindow: Codable, Equatable, Sendable {
     let label: String
     let usedPercent: Double
     let resetsAt: Date?
+    let observedAt: Date?
+    let freshness: CapacityFreshness
 }

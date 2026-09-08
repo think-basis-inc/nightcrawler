@@ -1,22 +1,38 @@
 import Foundation
 
-/// Reads Claude Code usage from Anthropic's OAuth endpoint using the token
-/// Claude Code already stores in the macOS Keychain.
+/// Reads Claude Code usage using the credential file when present and local CLI /usage fallback,
+/// not macOS Keychain.
 struct ClaudeCodeUsageProvider: UsageProvider {
     let id = "claude"
     let label = "Claude Code"
 
-    private let credentials: ClaudeCredentialStore
+    typealias SessionDataLoader = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+    typealias CLIWindowsReader = @Sendable () async -> [UsageWindow]
 
-    init(credentials: ClaudeCredentialStore = .shared) {
+    private let credentials: ClaudeCredentialStore
+    private let cliUsage: ClaudeCLIUsageClient
+    private let sessionDataLoader: SessionDataLoader
+    private let cliWindowsReader: CLIWindowsReader?
+
+    init(
+        credentials: ClaudeCredentialStore = .shared,
+        cliUsage: ClaudeCLIUsageClient = ClaudeCLIUsageClient(),
+        sessionDataLoader: SessionDataLoader? = nil,
+        cliWindowsReader: CLIWindowsReader? = nil
+    ) {
         self.credentials = credentials
+        self.cliUsage = cliUsage
+        self.sessionDataLoader = sessionDataLoader ?? { request in
+            try await URLSession.shared.data(for: request)
+        }
+        self.cliWindowsReader = cliWindowsReader
     }
 
     var isAvailable: Bool { true }
 
     func read() async -> UsageReading {
         guard let token = await credentials.read() else {
-            return makeReading(status: .needsAuth, error: "Sign in to Claude Code to refresh its subscription login")
+            return await readFromCLI()
         }
         let credentials = Credentials(
             accessToken: token,
@@ -33,12 +49,12 @@ struct ClaudeCodeUsageProvider: UsageProvider {
         request.timeoutInterval = 15
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await sessionDataLoader(request)
             guard let http = response as? HTTPURLResponse else {
                 return makeReading(status: .error("Bad response"))
             }
             if http.statusCode == 401 || http.statusCode == 403 {
-                return makeReading(status: .needsAuth, error: "Claude subscription login expired")
+                return await readFromCLI()
             }
             if http.statusCode == 429 {
                 return makeReading(status: .error("Rate limited by Claude"))
@@ -50,7 +66,11 @@ struct ClaudeCodeUsageProvider: UsageProvider {
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             let payload = try decoder.decode(UsageResponse.self, from: data)
-            let windows = payload.windows()
+            var windows = payload.windows()
+            if !windows.isEmpty, !windows.contains(where: { $0.id == "fable" || $0.id == "weekly_scoped" }) {
+                let cliWindows = await readCLIWindows()
+                windows = Self.augment(oauthWindows: windows, with: cliWindows)
+            }
             let status: UsageReading.ReadingStatus = windows.isEmpty
                 ? .error("Claude returned incomplete usage windows")
                 : .live
@@ -68,6 +88,45 @@ struct ClaudeCodeUsageProvider: UsageProvider {
         } catch {
             return makeReading(status: .error("Claude usage request failed"))
         }
+    }
+
+    private func readCLIWindows() async -> [UsageWindow] {
+        if let cliWindowsReader {
+            return await cliWindowsReader()
+        }
+        return await cliUsage.readWindows()
+    }
+
+    private func readFromCLI() async -> UsageReading {
+        let windows = await readCLIWindows()
+        guard !windows.isEmpty else {
+            return makeReading(
+                status: .needsAuth,
+                error: "Open Claude Code once so NightCrawler can read subscription usage"
+            )
+        }
+        return UsageReading(
+            providerId: id,
+            label: label,
+            accountId: nil,
+            authMode: "subscription",
+            source: "claude_cli_usage",
+            windows: windows,
+            status: .live,
+            observedAt: Date(),
+            error: nil
+        )
+    }
+
+    static func augment(oauthWindows: [UsageWindow], with cliWindows: [UsageWindow]) -> [UsageWindow] {
+        guard !oauthWindows.contains(where: { $0.id == "fable" || $0.id == "weekly_scoped" }),
+              let fable = cliWindows.first(where: { $0.id == "fable" || $0.id == "weekly_scoped" })
+        else {
+            return oauthWindows
+        }
+        var combined = oauthWindows
+        combined.append(fable)
+        return combined
     }
 
     private func makeReading(status: UsageReading.ReadingStatus, error: String? = nil) -> UsageReading {

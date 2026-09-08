@@ -17,12 +17,18 @@ struct UsageReading: Identifiable, Equatable, Sendable {
     }
 
     var outerRingWindow: UsageWindow? {
-        windows.first { $0.id == "weekly_all" } ?? headlineWindow
+        windows.first { $0.id == "weekly_all" || $0.id == "cursor_models" } ?? headlineWindow
     }
 
     var innerRingWindow: UsageWindow? {
-        guard providerId == "claude" else { return nil }
-        return windows.first { $0.id == "weekly_scoped" || $0.id == "fable" }
+        switch providerId {
+        case "claude":
+            return windows.first { $0.id == "weekly_scoped" || $0.id == "fable" }
+        case "cursor":
+            return windows.first { $0.id == "other_models" }
+        default:
+            return nil
+        }
     }
 
     enum ReadingStatus: Equatable, Sendable {

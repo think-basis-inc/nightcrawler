@@ -38,7 +38,8 @@ enum DemoData {
                 authMode: "subscription",
                 source: "demo",
                 windows: [
-                    UsageWindow(id: "included", label: "Included usage", used: 4500, limit: 10000, usedPercent: 45, windowMinutes: 43200, resetsAt: now.addingTimeInterval(12 * 86400))
+                    UsageWindow(id: "cursor_models", label: "Cursor Models", used: 3900, limit: 10000, usedPercent: 39, windowMinutes: 43200, resetsAt: now.addingTimeInterval(12 * 86400)),
+                    UsageWindow(id: "other_models", label: "Other Models", used: 100, limit: 10000, usedPercent: 1, windowMinutes: 43200, resetsAt: now.addingTimeInterval(12 * 86400))
                 ],
                 status: .live,
                 observedAt: now,

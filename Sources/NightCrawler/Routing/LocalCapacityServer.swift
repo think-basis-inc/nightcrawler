@@ -33,6 +33,8 @@ final class LocalCapacityServer: @unchecked Sendable {
 
     private func handle(_ connection: NWConnection) {
         connection.start(queue: queue)
+        let timeout = DispatchWorkItem { connection.cancel() }
+        queue.asyncAfter(deadline: .now() + 2, execute: timeout)
         connection.receive(minimumIncompleteLength: 1, maximumLength: 8_192) { [weak self] data, _, _, _ in
             guard let self, let data else {
                 connection.cancel()
@@ -50,11 +52,25 @@ final class LocalCapacityServer: @unchecked Sendable {
 
 enum LocalCapacityHTTP {
     static func response(for request: Data, snapshot: CapacitySnapshot) -> Data {
-        guard let requestLine = String(data: request, encoding: .utf8)?
-            .components(separatedBy: "\r\n")
-            .first
-        else {
+        guard let requestText = String(data: request, encoding: .utf8) else {
             return response(status: "400 Bad Request", body: ["error": "bad_request"])
+        }
+        let lines = requestText.components(separatedBy: "\r\n")
+        guard let requestLine = lines.first else {
+            return response(status: "400 Bad Request", body: ["error": "bad_request"])
+        }
+
+        let host = lines.dropFirst().first { $0.lowercased().hasPrefix("host:") }.map {
+            String($0.dropFirst("host:".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+        }
+        let allowedHosts: Set<String> = [
+            "127.0.0.1", "127.0.0.1:\(LocalCapacityServer.port)",
+            "localhost", "localhost:\(LocalCapacityServer.port)",
+        ]
+        guard let host, allowedHosts.contains(host) else {
+            return response(status: "403 Forbidden", body: ["error": "forbidden_host"])
         }
 
         let parts = requestLine.split(separator: " ")

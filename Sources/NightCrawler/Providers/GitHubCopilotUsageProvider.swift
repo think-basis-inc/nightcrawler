@@ -17,8 +17,30 @@ struct GitHubCopilotUsageProvider: UsageProvider {
                 error: "Install and sign in to GitHub Copilot CLI to read usage"
             )
         }
-        let result = await CopilotRPCClient(command: command, timeout: 19).query()
+        var result = await CopilotRPCClient(command: command, timeout: 19).query()
+        if result.windows.isEmpty, result.status != .needsAuth {
+            let billing = await CopilotBillingClient(planLimit: CopilotPlanSettings.current()).query()
+            result = Self.reconcile(cli: result, billing: billing)
+        }
         return map(result)
+    }
+
+    static func reconcile(
+        cli: CopilotQuotaParser.Result,
+        billing: CopilotQuotaParser.Result
+    ) -> CopilotQuotaParser.Result {
+        if !billing.windows.isEmpty {
+            var measured = billing
+            measured.accountId = cli.accountId
+            return measured
+        }
+        if billing.status == .needsAuth, cli.status != .needsAuth {
+            var authenticated = cli
+            authenticated.status = .unknown
+            authenticated.error = billing.error
+            return authenticated
+        }
+        return cli
     }
 
     private func map(_ result: CopilotQuotaParser.Result) -> UsageReading {

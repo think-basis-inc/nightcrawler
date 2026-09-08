@@ -1,61 +1,42 @@
 import Foundation
 
-struct SecurityInvocation: Equatable, Sendable {
-    var executable: String
-    var arguments: [String]
-    var environment: [String: String]
-    var stdinClosed: Bool
-    var stderrDiscarded: Bool
-    var timeout: TimeInterval
-}
-
-struct SecurityRunResult: Sendable {
-    var exitCode: Int32
-    var stdout: Data
-}
-
+/// Reads the existing Claude Code login file directly. This avoids invoking
+/// macOS Keychain tooling, so background refreshes cannot trigger a password
+/// prompt. The token is validated and retained only in this actor's memory.
 actor ClaudeCredentialStore {
     static let shared = ClaudeCredentialStore()
     static let maxBytes = 65_536
-    static let service = "Claude Code-credentials"
 
-    typealias Runner = @Sendable (SecurityInvocation) -> SecurityRunResult
+    typealias Reader = @Sendable (URL) -> Data?
 
-    private let runner: Runner
+    private let fileURL: URL
+    private let reader: Reader
     private var cache: Cache?
 
     private enum Cache {
         case token(String)
-        case refused
+        case unavailable
     }
 
-    init(runner: Runner? = nil) {
-        self.runner = runner ?? ClaudeCredentialStore.defaultRunner
+    init(fileURL: URL = ClaudeCredentialStore.defaultFileURL, reader: Reader? = nil) {
+        self.fileURL = fileURL
+        self.reader = reader ?? ClaudeCredentialStore.defaultReader
     }
 
-    func read() async -> String? {
+    func read() -> String? {
         switch cache {
         case .token(let token):
             return token
-        case .refused:
+        case .unavailable:
             return nil
         case .none:
             break
         }
 
-        let invocation = SecurityInvocation(
-            executable: "/usr/bin/security",
-            arguments: ["find-generic-password", "-s", Self.service, "-w"],
-            environment: RestrictedProcess.environment(),
-            stdinClosed: true,
-            stderrDiscarded: true,
-            timeout: 8
-        )
-        let result = runner(invocation)
-        guard result.exitCode == 0, result.stdout.count <= Self.maxBytes,
-              let token = parseToken(result.stdout)
+        guard let data = reader(fileURL), data.count <= Self.maxBytes,
+              let token = parseToken(data)
         else {
-            cache = .refused
+            cache = .unavailable
             return nil
         }
         cache = .token(token)
@@ -63,10 +44,6 @@ actor ClaudeCredentialStore {
     }
 
     func allowRetry() {
-        cache = nil
-    }
-
-    func noteSourceChange() {
         cache = nil
     }
 
@@ -83,8 +60,6 @@ actor ClaudeCredentialStore {
 
     private func number(_ value: Any?) -> Double? {
         if value is Bool { return nil }
-        if let double = value as? Double, double.isFinite, double >= 0 { return double }
-        if let int = value as? Int, int >= 0 { return Double(int) }
         if let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() {
             let double = number.doubleValue
             return double.isFinite && double >= 0 ? double : nil
@@ -92,38 +67,12 @@ actor ClaudeCredentialStore {
         return nil
     }
 
-    nonisolated static func defaultRunner(_ invocation: SecurityInvocation) -> SecurityRunResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: invocation.executable)
-        process.arguments = invocation.arguments
-        process.environment = invocation.environment
-        process.currentDirectoryURL = URL(fileURLWithPath: "/")
-        if invocation.stdinClosed {
-            process.standardInput = FileHandle.nullDevice
-        }
-        if invocation.stderrDiscarded {
-            process.standardError = FileHandle.nullDevice
-        }
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        do {
-            try process.run()
-        } catch {
-            return SecurityRunResult(exitCode: -1, stdout: Data())
-        }
-        let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global().async {
-            process.waitUntilExit()
-            group.leave()
-        }
-        let timedOut = group.wait(timeout: .now() + invocation.timeout) == .timedOut
-        if timedOut {
-            process.terminate()
-            process.waitUntilExit()
-            return SecurityRunResult(exitCode: -1, stdout: Data())
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return SecurityRunResult(exitCode: process.terminationStatus, stdout: data)
+    private static let defaultFileURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".claude/.credentials.json")
+
+    nonisolated private static func defaultReader(_ url: URL) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        return try? handle.read(upToCount: maxBytes + 1)
     }
 }

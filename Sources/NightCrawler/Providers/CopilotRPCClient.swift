@@ -87,9 +87,7 @@ final class CopilotRPCClient: @unchecked Sendable {
             if let login = auth["login"] as? String, (1...256).contains(login.count) {
                 row.accountId = ProviderHelpers.sha256Prefix("github.com/" + login.lowercased())
             }
-            if !row.windows.isEmpty {
-                row.authMode = "subscription"
-            }
+            row.authMode = "subscription"
             return row
         } catch is TimeoutError {
             return .empty(status: .error, error: "Copilot usage request timed out")
@@ -99,10 +97,7 @@ final class CopilotRPCClient: @unchecked Sendable {
     }
 
     private func reap(_ process: Process) {
-        if process.isRunning {
-            process.terminate()
-        }
-        process.waitUntilExit()
+        RestrictedProcess.terminateAndWait(process)
         lastChildWasReaped = true
     }
 
