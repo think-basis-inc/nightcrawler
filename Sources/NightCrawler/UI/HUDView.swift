@@ -42,6 +42,10 @@ struct ProviderIcon: View {
                 }
             }
             .frame(width: HUDLayout.ringDiameter, height: HUDLayout.ringDiameter)
+            // Strokes and glyph paths hit-test on their ink alone, which leaves
+            // the ring interior (and the hollow of glyphs like the OpenAI
+            // knot) dead to the pointer. Make the whole circle the target.
+            .contentShape(Circle())
 
             if let percentageText {
                 Text(percentageText)
