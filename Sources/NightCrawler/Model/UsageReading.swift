@@ -17,7 +17,10 @@ struct UsageReading: Identifiable, Equatable, Sendable {
     }
 
     var outerRingWindow: UsageWindow? {
-        windows.first { $0.id == "weekly_all" || $0.id == "cursor_models" } ?? headlineWindow
+        if providerId == "devin" {
+            return windows.first { $0.id == "weekly" }
+        }
+        return windows.first { $0.id == "weekly_all" || $0.id == "cursor_models" } ?? headlineWindow
     }
 
     var innerRingWindow: UsageWindow? {
@@ -26,6 +29,8 @@ struct UsageReading: Identifiable, Equatable, Sendable {
             return windows.first { $0.id == "weekly_scoped" || $0.id == "fable" }
         case "cursor":
             return windows.first { $0.id == "other_models" }
+        case "devin":
+            return windows.first { $0.id == "daily" }
         default:
             return nil
         }

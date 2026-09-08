@@ -170,7 +170,7 @@ func devinAndCubicAreUsageProvidersRatherThanEmptySyntheticRows() throws {
     let store = UsageStore(providers: providers, defaults: defaults)
     store.toggleRoutingTool("cubic")
     store.readings = [
-        semanticReading(id: "devin", usedPercent: 8),
+        DevinUsageProvider.parse(Data(#"{"userStatus":{"planStatus":{"weeklyQuotaRemainingPercent":92}},"planInfo":{"billingStrategy":"BILLING_STRATEGY_QUOTA"}}"#.utf8)),
         semanticReading(id: "cubic", usedPercent: 100.926),
     ]
 
