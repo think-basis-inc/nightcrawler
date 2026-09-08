@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 @testable import NightCrawler
@@ -32,11 +33,14 @@ func fastProviderReachesTheEndpointBeforeASlowProviderFinishes() async {
     )
     store.enabledProviderIds = ["fast", "slow"]
 
+    let updates = store.$readings.values
     let refresh = Task { await store.refresh() }
-    try? await Task.sleep(for: .milliseconds(80))
-
-    #expect(store.readings.contains { $0.providerId == "fast" })
-    #expect(!store.readings.contains { $0.providerId == "slow" })
+    for await readings in updates {
+        if readings.contains(where: { $0.providerId == "fast" }) {
+            #expect(!readings.contains { $0.providerId == "slow" })
+            break
+        }
+    }
     await refresh.value
 }
 
