@@ -27,9 +27,13 @@ final class UsageStore: ObservableObject {
     private var deniedProviderIds: Set<String> = []
     private var keychainProviderIds: Set<String> = ["antigravity"]
 
-    private let enabledDefaultsKey = "enabledProviderIds"
+    private static let enabledDefaultsKey = "enabledProviderIds"
+    private static let claudeDefaultEnabledMigrationKey = "migratedDefaultEnabledClaude"
     private let orderDefaultsKey = "providerOrder"
     private let routingToolsDefaultsKey = "routingToolStates"
+    private static let defaultEnabledProviderIds: Set<String> = [
+        "claude", "codex", "cursor", "grok", "opencode", "zcode",
+    ]
 
     init(
         providers: [UsageProvider] = UsageStore.defaultProviders(),
@@ -40,9 +44,9 @@ final class UsageStore: ObservableObject {
         self.defaults = defaults
         self.claudeCredentials = claudeCredentials
         let providerIds = providers.map(\.id)
-        let saved = defaults.array(forKey: enabledDefaultsKey) as? [String]
-        let defaultEnabled: Set<String> = ["codex", "cursor", "grok", "opencode", "zcode"]
-        self.enabledProviderIds = saved.map(Set.init) ?? defaultEnabled
+        Self.migrateClaudeDefaultEnabled(defaults: defaults)
+        let saved = defaults.array(forKey: Self.enabledDefaultsKey) as? [String]
+        self.enabledProviderIds = saved.map(Set.init) ?? Self.defaultEnabledProviderIds
         self.providerOrder = Self.normalizedOrder(
             defaults.array(forKey: orderDefaultsKey) as? [String],
             providerIds: providerIds
@@ -330,7 +334,17 @@ final class UsageStore: ObservableObject {
     }
 
     private func saveEnabled() {
-        defaults.set(Array(enabledProviderIds), forKey: enabledDefaultsKey)
+        defaults.set(Array(enabledProviderIds), forKey: Self.enabledDefaultsKey)
+    }
+
+    private static func migrateClaudeDefaultEnabled(defaults: UserDefaults) {
+        guard !defaults.bool(forKey: claudeDefaultEnabledMigrationKey) else { return }
+        defaults.set(true, forKey: claudeDefaultEnabledMigrationKey)
+        guard var ids = defaults.array(forKey: enabledDefaultsKey) as? [String],
+              !ids.contains("claude")
+        else { return }
+        ids.append("claude")
+        defaults.set(ids, forKey: enabledDefaultsKey)
     }
 
     private func saveProviderOrder() {

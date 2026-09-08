@@ -10,17 +10,20 @@ struct ClaudeCodeUsageProvider: UsageProvider {
     typealias CLIWindowsReader = @Sendable () async -> [UsageWindow]
 
     private let credentials: ClaudeCredentialStore
+    private let localUsage: ClaudeLocalUsageCache
     private let cliUsage: ClaudeCLIUsageClient
     private let sessionDataLoader: SessionDataLoader
     private let cliWindowsReader: CLIWindowsReader?
 
     init(
         credentials: ClaudeCredentialStore = .shared,
+        localUsage: ClaudeLocalUsageCache = .shared,
         cliUsage: ClaudeCLIUsageClient = ClaudeCLIUsageClient(),
         sessionDataLoader: SessionDataLoader? = nil,
         cliWindowsReader: CLIWindowsReader? = nil
     ) {
         self.credentials = credentials
+        self.localUsage = localUsage
         self.cliUsage = cliUsage
         self.sessionDataLoader = sessionDataLoader ?? { request in
             try await URLSession.shared.data(for: request)
@@ -31,6 +34,9 @@ struct ClaudeCodeUsageProvider: UsageProvider {
     var isAvailable: Bool { true }
 
     func read() async -> UsageReading {
+        if let cached = readingFromLocalCache() {
+            return cached
+        }
         guard let token = await credentials.read() else {
             return await readFromCLI()
         }
@@ -54,9 +60,10 @@ struct ClaudeCodeUsageProvider: UsageProvider {
                 return makeReading(status: .error("Bad response"))
             }
             if http.statusCode == 401 || http.statusCode == 403 {
-                return await readFromCLI()
+                return await readFromLocalOrCLI()
             }
             if http.statusCode == 429 {
+                if let cached = readingFromLocalCache() { return cached }
                 return makeReading(status: .error("Rate limited by Claude"))
             }
             guard http.statusCode == 200 else {
@@ -86,6 +93,7 @@ struct ClaudeCodeUsageProvider: UsageProvider {
                 error: nil
             )
         } catch {
+            if let cached = readingFromLocalCache() { return cached }
             return makeReading(status: .error("Claude usage request failed"))
         }
     }
@@ -97,9 +105,31 @@ struct ClaudeCodeUsageProvider: UsageProvider {
         return await cliUsage.readWindows()
     }
 
+    private func readFromLocalOrCLI() async -> UsageReading {
+        if let cached = readingFromLocalCache() { return cached }
+        return await readFromCLI()
+    }
+
+    private func readingFromLocalCache() -> UsageReading? {
+        let windows = localUsage.windows()
+        guard !windows.isEmpty else { return nil }
+        return UsageReading(
+            providerId: id,
+            label: label,
+            accountId: nil,
+            authMode: "subscription",
+            source: "claude_local_cache",
+            windows: windows,
+            status: .live,
+            observedAt: windows.compactMap(\.observedAt).max() ?? Date(),
+            error: nil
+        )
+    }
+
     private func readFromCLI() async -> UsageReading {
         let windows = await readCLIWindows()
         guard !windows.isEmpty else {
+            if let cached = readingFromLocalCache() { return cached }
             return makeReading(
                 status: .needsAuth,
                 error: "Open Claude Code once so NightCrawler can read subscription usage"

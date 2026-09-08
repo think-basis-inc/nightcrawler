@@ -5,6 +5,36 @@ import Testing
 
 @MainActor
 @Test
+func claudeIsEnabledByDefaultOnAFreshInstall() {
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let store = UsageStore(providers: [], defaults: defaults)
+
+    #expect(store.isProviderEnabled("claude"))
+}
+
+@MainActor
+@Test
+func savedProviderVisibilityGainsClaudeOnceThenRespectsLaterDisable() {
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    defaults.set(["codex", "cursor"], forKey: "enabledProviderIds")
+
+    let first = UsageStore(providers: [], defaults: defaults)
+    #expect(first.isProviderEnabled("claude"))
+
+    first.toggle(providerId: "claude")
+    #expect(!first.isProviderEnabled("claude"))
+
+    let restarted = UsageStore(providers: [], defaults: defaults)
+    #expect(!restarted.isProviderEnabled("claude"))
+}
+
+@MainActor
+@Test
 func storeFiltersDisabledProviders() async {
     let store = UsageStore(providers: [AlwaysAvailableProvider()])
     store.enabledProviderIds = []
