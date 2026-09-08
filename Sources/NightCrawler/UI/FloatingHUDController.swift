@@ -40,7 +40,7 @@ final class FloatingHUDController: ObservableObject {
         let size = baseSize
         let hosting = NSHostingController(rootView: rootView(baseSize: baseSize))
         hostingController = hosting
-        let panel = NSPanel(
+        let panel = HUDPanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -402,4 +402,9 @@ final class FloatingHUDController: ObservableObject {
         pendingHide?.cancel()
         pendingHide = nil
     }
+}
+
+/// Borderless panels otherwise refuse keyboard focus, leaving settings fields inert.
+private final class HUDPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
 }

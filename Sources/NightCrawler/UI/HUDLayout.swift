@@ -130,6 +130,7 @@ enum HUDLayout {
         let providerRows = CGFloat(max(providerCount, 0)) * settingsRowHeight
             + CGFloat(max(providerCount - 1, 0)) * settingsRowSpacing
         let copilotSection = 2 * blockSpacing + settingsTitleHeight + headerToBlock + edgePickerHeight
+        let cubicSection = 2 * blockSpacing + settingsTitleHeight + headerToBlock + edgePickerHeight
         let routingRows = CGFloat(max(routingToolCount, 0)) * settingsRowHeight
             + CGFloat(max(routingToolCount - 1, 0)) * settingsRowSpacing
         let routingSection = routingToolCount > 0
@@ -141,7 +142,7 @@ enum HUDLayout {
             ? 2 * blockSpacing + settingsTitleHeight + headerToBlock + displayRows
             : 0
         let contentHeight = edgeSection + settingsTitleHeight + headerToBlock
-            + providerRows + copilotSection + routingSection + displaySection
+            + providerRows + copilotSection + cubicSection + routingSection + displaySection
         return 2 * cardPadding + contentHeight.rounded(.up)
     }
 

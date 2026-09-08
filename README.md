@@ -27,7 +27,8 @@ Sources/NightCrawler/
   Providers/
     UsageProvider.swift      protocol
     GitHubCopilotUsageProvider.swift  Copilot CLI + GitHub billing metadata
-    DinoUsageCache.swift     sanitized Devin/Cubic monitoring snapshots
+    DevinUsageProvider.swift direct Devin account quota
+    CubicUsageProvider.swift read-only Cubic reports from GitHub checks
   UI/
     HUDRootView.swift        welded rail plus attached slideout
     HUDView.swift            provider rings
@@ -59,8 +60,8 @@ NightCrawler reads credentials the tools already store locally. Install and sign
 | Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
 | GitHub Copilot | Copilot CLI metadata, then `gh api` premium-request billing when the CLI reports no finite allowance |
 | Grok | `~/.grok/auth.json` |
-| Devin | Sanitized `~/.dino[-beta]/subscriptions-devin.json` monitoring snapshot |
-| Cubic | Last authoritative reviewed-lines report in sanitized `~/.dino[-beta]/subscriptions-cubic.json` |
+| Devin | Direct account-quota request using the existing Devin CLI login (`~/.local/share/devin/credentials.toml`, or XDG data home) |
+| Cubic | Direct read-only GitHub check lookup using `gh` authentication; configure owner/repository in Settings. Last reported allowance, not a live balance. No review is triggered. |
 | OpenCode | `~/.local/share/opencode/auth.json` |
 | Antigravity | `gemini` / `antigravity` Keychain item |
 | ZCode / GLM | `~/.claude/settings.json`, `~/.zcode/v2/config.json`, or `~/.local/share/opencode/auth.json` |

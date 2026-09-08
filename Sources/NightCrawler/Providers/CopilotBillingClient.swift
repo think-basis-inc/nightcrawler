@@ -66,7 +66,7 @@ final class CopilotBillingClient: @unchecked Sendable {
         return CopilotQuotaParser.parseBilling(raw, planLimit: planLimit, now: now)
     }
 
-    private static func run(_ command: [String], timeout: TimeInterval, maxBytes: Int) -> BillingCommandResult {
+    static func run(_ command: [String], timeout: TimeInterval, maxBytes: Int) -> BillingCommandResult {
         guard let executable = command.first, RestrictedProcess.executableExists(executable) else {
             return BillingCommandResult(exitCode: -1, stdout: Data())
         }

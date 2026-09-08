@@ -8,6 +8,7 @@ struct SettingsView: View {
     let onEdgeChange: (NotchEdge) -> Void
     let onMiniModeChange: (Bool) -> Void
     let onAutoHideChange: (Bool) -> Void
+    @State private var cubicRepositoryDraft = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -73,6 +74,26 @@ struct SettingsView: View {
             )
             .padding(.top, HUDLayout.headerToBlock)
 
+            Text("Cubic report source")
+                .font(Typography.cardTitle)
+                .frame(height: HUDLayout.settingsTitleHeight)
+                .padding(.top, 2 * HUDLayout.blockSpacing)
+            HStack {
+                TextField("GitHub owner/repository", text: $cubicRepositoryDraft)
+                    .textFieldStyle(.plain)
+                    .font(Typography.cardBody)
+                    .accessibilityLabel("Cubic GitHub repository")
+                    .onSubmit { store.setCubicUsageRepository(cubicRepositoryDraft) }
+                Button("Save") { store.setCubicUsageRepository(cubicRepositoryDraft) }
+                    .buttonStyle(.plain)
+                    .font(Typography.cardBody)
+                    .disabled(!CubicUsageProvider.validRepository(cubicRepositoryDraft))
+                    .accessibilityLabel("Save Cubic repository")
+            }
+            .frame(height: HUDLayout.edgePickerHeight)
+            .padding(.top, HUDLayout.headerToBlock)
+            .help("Reads Cubic's latest GitHub check report. Never requests a review.")
+
             if !store.routingToolStates.isEmpty {
                 Text("Agent availability")
                     .font(Typography.cardTitle)
@@ -91,6 +112,7 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .foregroundStyle(Palette.textPrimary)
+        .onAppear { cubicRepositoryDraft = store.cubicUsageRepository }
     }
 }
 

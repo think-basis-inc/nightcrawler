@@ -16,6 +16,7 @@ final class UsageStore: ObservableObject {
     @Published private(set) var copilotPlanLimit: Int {
         didSet { defaults.set(copilotPlanLimit, forKey: CopilotPlanSettings.key) }
     }
+    @Published private(set) var cubicUsageRepository: String
 
     private let providers: [UsageProvider]
     private let defaults: UserDefaults
@@ -53,6 +54,7 @@ final class UsageStore: ObservableObject {
             self.routingToolStates = RoutingToolState.defaults
         }
         self.copilotPlanLimit = CopilotPlanSettings.current(defaults: defaults)
+        self.cubicUsageRepository = defaults.string(forKey: CubicUsageProvider.repositoryKey) ?? ""
         self.readings = PersistedReadingCache.load(
             defaults: defaults,
             knownProviderIds: Set(providerIds)
@@ -112,6 +114,17 @@ final class UsageStore: ObservableObject {
         timer = nil
     }
 
+    func setCubicUsageRepository(_ repository: String) {
+        let value = repository.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard CubicUsageProvider.validRepository(value), value != cubicUsageRepository else { return }
+        cubicUsageRepository = value
+        defaults.set(value, forKey: CubicUsageProvider.repositoryKey)
+        // An allowance from another organization must not survive a source change.
+        readings.removeAll { $0.providerId == "cubic" }
+        PersistedReadingCache.save(readings, defaults: defaults)
+        if isProviderEnabled("cubic") { Task { await refresh(providerId: "cubic") } }
+    }
+
     func refresh() async {
         if let demoReadings {
             readings = demoReadings
@@ -131,7 +144,9 @@ final class UsageStore: ObservableObject {
             await claudeCredentials.allowRetry()
         }
         guard let provider = providers.first(where: { $0.id == providerId }) else { return }
+        let cubicSource = cubicUsageRepository
         let reading = await provider.read()
+        guard providerId != "cubic" || cubicSource == cubicUsageRepository else { return }
         updateReading(reading)
         if case .needsAuth = reading.status, keychainProviderIds.contains(providerId) {
             deniedProviderIds.insert(providerId)
@@ -208,6 +223,7 @@ final class UsageStore: ObservableObject {
         guard !isPolling else { return }
         isPolling = true
         defer { isPolling = false }
+        let cubicSource = cubicUsageRepository
         await claudeCredentials.allowRetry()
         let enabled = providers.filter { isProviderEnabled($0.id) && !deniedProviderIds.contains($0.id) }
         await withTaskGroup(of: UsageReading.self) { group in
@@ -215,6 +231,7 @@ final class UsageStore: ObservableObject {
                 group.addTask { await provider.read() }
             }
             for await reading in group {
+                if reading.providerId == "cubic", cubicSource != cubicUsageRepository { continue }
                 updateReading(reading)
                 if case .needsAuth = reading.status,
                    keychainProviderIds.contains(reading.providerId),
@@ -359,8 +376,8 @@ final class UsageStore: ObservableObject {
             CursorUsageProvider(),
             GitHubCopilotUsageProvider(),
             GrokUsageProvider(),
-            DinoCacheUsageProvider(id: "devin", label: "Devin"),
-            DinoCacheUsageProvider(id: "cubic", label: "Cubic"),
+            DevinUsageProvider(),
+            CubicUsageProvider(),
             GeminiUsageProvider(),
             OpenCodeUsageProvider(),
             AntigravityUsageProvider(),

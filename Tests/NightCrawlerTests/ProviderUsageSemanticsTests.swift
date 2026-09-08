@@ -211,23 +211,6 @@ private func semanticReading(id: String, usedPercent: Double) -> UsageReading {
 }
 
 @Test
-func dinoQuotaCacheCarriesDevinAndCubicUsageIntoNativeReadings() throws {
-    let devinData = Data(#"{"devin":{"provider":"devin","label":"Devin","auth_mode":"subscription","state":"live","observed_at":"2026-09-07T15:26:00Z","source":"devin_cli_user_status","windows":[{"id":"weekly","label":"Weekly quota","used_percent":8,"window_minutes":10080,"resets_at":1789286400}],"error":null}}"#.utf8)
-    let cubicData = Data(#"{"cubic":{"provider":"cubic","label":"Cubic","auth_mode":"unknown","state":"stale","observed_at":"2026-09-07T02:39:03Z","source":"cubic_github_check","windows":[{"id":"reviewed_lines","label":"Monthly reviewed lines","used_percent":100.926,"used_count":302778,"limit_count":300000,"resets_on":"2026-09-17"}],"error":"Last reported by Cubic; not a live balance"}}"#.utf8)
-
-    let devin = try #require(DinoUsageCache.reading(from: devinData, providerId: "devin", fallbackLabel: "Devin"))
-    let cubic = try #require(DinoUsageCache.reading(from: cubicData, providerId: "cubic", fallbackLabel: "Cubic"))
-
-    #expect(devin.status == .live)
-    #expect(devin.windows.first?.usedPercent == 8)
-    #expect(cubic.status == .live)
-    #expect(cubic.windows.first?.used == 302_778)
-    #expect(cubic.windows.first?.limit == 300_000)
-    #expect(cubic.windows.first?.usedPercent == 100.926)
-    #expect(cubic.windows.first?.resetsAt == ISO8601DateFormatter().date(from: "2026-09-17T00:00:00Z"))
-}
-
-@Test
 func demoDataUsesConsumedPercentagesForTheReportedCorrections() throws {
     let codex = try #require(DemoData.readings.first { $0.providerId == "codex" })
     let grok = try #require(DemoData.readings.first { $0.providerId == "grok" })
