@@ -2,6 +2,13 @@ import Foundation
 import Testing
 @testable import NightCrawler
 
+private func emptyLocalUsageCache() -> ClaudeLocalUsageCache {
+    ClaudeLocalUsageCache(
+        fileURL: URL(fileURLWithPath: "/missing/claude.json"),
+        reader: { _ in nil }
+    )
+}
+
 private let sampleToken = "test-subscription-token"
 
 private func credentialJSON(
@@ -71,6 +78,7 @@ func successfulOAuthPayloadMissingFableIsAugmentedWithClaudeCLIUsageClientsFable
 
     let provider = ClaudeCodeUsageProvider(
         credentials: credentials,
+        localUsage: emptyLocalUsageCache(),
         cliUsage: cliUsage,
         sessionDataLoader: { _ in (Data(oauthJSON.utf8), httpResponse) }
     )
@@ -125,6 +133,7 @@ func claudeOAuthRefreshDoesNotRequeryCLIWhenOAuthAlreadyIncludesFable() async th
     let spy = CLISpy()
     let provider = ClaudeCodeUsageProvider(
         credentials: credentials,
+        localUsage: emptyLocalUsageCache(),
         sessionDataLoader: { _ in (Data(oauthJSON.utf8), httpResponse) },
         cliWindowsReader: { spy.read() }
     )

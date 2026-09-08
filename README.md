@@ -55,7 +55,7 @@ NightCrawler reads credentials the tools already store locally. Install and sign
 
 | Provider | What it reads |
 |---|---|
-| Claude Code | OAuth usage API, with Claude Code’s local non-model `/usage` screen as the no-password fallback |
+| Claude Code | Claude Code’s `~/.claude.json` usage cache (no live session). OAuth and local `/usage` are fallbacks only when that cache is missing. |
 | Codex CLI | Current local session rate-limit snapshots, with `~/.codex/auth.json` as the backend fallback |
 | Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
 | GitHub Copilot | Copilot CLI metadata, then `gh api` premium-request billing when the CLI reports no finite allowance |
