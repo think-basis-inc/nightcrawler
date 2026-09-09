@@ -7,6 +7,7 @@ enum CopilotQuotaParser {
         var usedPercent: Double
         var resetsAt: Date?
         var usedCount: Int? = nil
+        var includedLimit: Int? = nil
         var displaysPercent: Bool = true
     }
 
@@ -170,13 +171,16 @@ enum CopilotQuotaParser {
         guard key == "premium_interactions",
               let credits = number(snapshot["credits_used"])
         else { return nil }
+        let included = Double(CopilotBusinessCredits.includedPool)
+        guard included > 0 else { return nil }
         return Window(
             id: key,
-            label: "Credits used",
-            usedPercent: 0,
+            label: "Included credits",
+            usedPercent: credits / included * 100,
             resetsAt: reset ?? epoch(snapshot["reset_date"]) ?? dateOnly(snapshot["reset_date"]),
             usedCount: Int(credits.rounded()),
-            displaysPercent: false
+            includedLimit: CopilotBusinessCredits.includedPool,
+            displaysPercent: true
         )
     }
 

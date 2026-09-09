@@ -168,17 +168,20 @@ private func businessInternalUserQuota(creditsUsed: Any = 4909) -> [String: Any]
 }
 
 @Test
-func copilotInternalUserBusinessCreditsUsedAreALiveCountNotABlankOrInventedPercent() throws {
+func copilotInternalUserBusinessCreditsFillOneSeatIncludedAllowance() throws {
     let result = CopilotQuotaParser.parseInternalUser(businessInternalUserQuota())
     let window = try #require(result.windows.first)
+    let included = 1_900.0
 
     #expect(result.status == .live)
     #expect(result.windows.count == 1)
     #expect(window.id == "premium_interactions")
-    #expect(window.label == "Credits used")
-    #expect(window.displaysPercent == false)
+    #expect(window.label == "Included credits")
+    #expect(window.displaysPercent == true)
     #expect(window.usedCount == 4909)
-    #expect(window.usedPercent == 0)
+    #expect(window.includedLimit == 1_900)
+    #expect(abs(window.usedPercent - (4909 / included * 100)) < 0.000001)
+    #expect(abs(window.usedPercent - (4909 / 300 * 100)) > 1, "must not use the Settings premium-request 300")
     #expect(window.resetsAt == ISO8601DateFormatter().date(from: "2026-10-01T00:00:00Z"))
 }
 
@@ -245,7 +248,8 @@ func copilotUnlimitedCLIPlusInternalUserCreditsReconcileToTheMeasuredCount() thr
     #expect(cli.windows.isEmpty)
     #expect(result.status == .live)
     #expect(result.windows.first?.usedCount == 4909)
-    #expect(result.windows.first?.displaysPercent == false)
+    #expect(result.windows.first?.includedLimit == 1_900)
+    #expect(result.windows.first?.displaysPercent == true)
 }
 
 @Test

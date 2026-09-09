@@ -66,7 +66,7 @@ NightCrawler reads credentials the tools already store locally. Install and sign
 | Antigravity | `gemini` / `antigravity` Keychain item |
 | ZCode / GLM | `~/.claude/settings.json`, `~/.zcode/v2/config.json`, or `~/.local/share/opencode/auth.json` |
 
-Copilot Business/Enterprise seats have no per-user percent quota — NightCrawler shows the vendor `credits_used` count from `/copilot_internal/user`, not 0% of a Settings plan limit. Individual premium-request percentages still need the matching monthly plan limit in Settings (Free 50, Pro 300, or Pro+ 1500). GitHub’s billing endpoint also requires one-time **Plan: read** authorization on the existing `gh` login; NightCrawler never reads or stores the GitHub token.
+Copilot Business seats have no per-user percent in GitHub’s snapshot. NightCrawler shows `credits_used` against **one** Business seat of 1,900 included AI credits (not the Settings 50/300/1500 premium-request limits). Individual premium-request percentages still need the matching monthly plan limit in Settings. GitHub’s billing endpoint also requires one-time **Plan: read** authorization on the existing `gh` login; NightCrawler never reads or stores the GitHub token.
 
 ## Demo mode
 

@@ -140,6 +140,14 @@ final class CopilotBillingClient: @unchecked Sendable {
     }
 }
 
+enum CopilotBusinessCredits {
+    /// Copilot Business included AI credits per seat per month after the
+    /// 2026-09-01 promo. This HUD is pinned to one seat.
+    static let includedPerSeat = 1_900
+    static let seats = 1
+    static var includedPool: Int { includedPerSeat * seats }
+}
+
 enum CopilotPlanSettings {
     static let key = "copilotPlanLimit"
     static let allowedLimits = [50, 300, 1_500]

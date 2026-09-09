@@ -46,8 +46,19 @@ struct GitHubCopilotUsageProvider: UsageProvider {
         return cli
     }
 
-    private func map(_ result: CopilotQuotaParser.Result) -> UsageReading {
-        let windows = result.windows.map { window in
+    static func windows(from result: CopilotQuotaParser.Result) -> [UsageWindow] {
+        result.windows.map { window in
+            if let count = window.usedCount, let limit = window.includedLimit, limit > 0 {
+                return UsageWindow(
+                    id: window.id,
+                    label: window.label,
+                    used: count,
+                    limit: limit,
+                    usedPercent: window.usedPercent,
+                    windowMinutes: nil,
+                    resetsAt: window.resetsAt
+                )
+            }
             if window.displaysPercent {
                 return UsageWindow(
                     id: window.id,
@@ -69,6 +80,10 @@ struct GitHubCopilotUsageProvider: UsageProvider {
                 resetsAt: window.resetsAt
             )
         }
+    }
+
+    private func map(_ result: CopilotQuotaParser.Result) -> UsageReading {
+        let windows = Self.windows(from: result)
         let status: UsageReading.ReadingStatus
         switch result.status {
         case .live: status = .live

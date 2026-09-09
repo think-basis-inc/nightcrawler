@@ -76,7 +76,8 @@ func copilotInternalUserClientUsesGhWithoutReadingOrPassingAToken() async throws
 
     #expect(result.status == .live)
     #expect(window.usedCount == 4909)
-    #expect(window.displaysPercent == false)
+    #expect(window.includedLimit == 1_900)
+    #expect(window.displaysPercent == true)
     #expect(spy.calls.count == 1)
     #expect(spy.calls[0].contains("copilot_internal/user"))
     #expect(spy.calls.flatMap { $0 }.allSatisfy { !$0.lowercased().contains("token") })

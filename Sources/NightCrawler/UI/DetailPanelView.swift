@@ -94,13 +94,21 @@ struct WindowRow: View {
                 .padding(.top, HUDLayout.labelToBar)
             }
 
-            Text(window.limit > 0
-                 ? "\(ProviderIcon.percentageText(for: window)) Used"
-                 : "\(window.used) credits used")
+            Text(usedCaption)
                 .font(Typography.cardBody)
                 .foregroundStyle(Palette.textPrimary)
                 .padding(.top, window.limit > 0 ? HUDLayout.barToUsed : HUDLayout.labelToBar)
         }
+    }
+
+    private var usedCaption: String {
+        if window.limit == CopilotBusinessCredits.includedPool, window.limit > 0 {
+            return "\(window.used) of \(window.limit) credits"
+        }
+        if window.limit > 0 {
+            return "\(ProviderIcon.percentageText(for: window)) Used"
+        }
+        return "\(window.used) credits used"
     }
 
     private func relativeTime(_ date: Date) -> String {

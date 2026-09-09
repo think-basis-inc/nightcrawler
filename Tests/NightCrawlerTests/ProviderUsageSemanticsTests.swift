@@ -83,32 +83,43 @@ func compactUsageTextNamesTheDirection() {
 
 @MainActor
 @Test
-func copilotBusinessCreditsUsedShowAsACountNotAPercentOrBlank() {
-    let window = UsageWindow(
-        id: "premium_interactions",
-        label: "Credits used",
-        used: 4909,
-        limit: 0,
-        usedPercent: 0,
-        windowMinutes: nil,
-        resetsAt: ISO8601DateFormatter().date(from: "2026-10-01T00:00:00Z")
-    )
+func copilotBusinessCreditsRingAgainstOneSeatIncludedAllowance() throws {
+    let result = CopilotQuotaParser.parseInternalUser([
+        "copilot_plan": "business",
+        "token_based_billing": true,
+        "quota_reset_date": "2026-10-01",
+        "quota_snapshots": [
+            "premium_interactions": [
+                "credits_used": 4909,
+                "entitlement": 0,
+                "unlimited": true,
+                "percent_remaining": 100,
+                "remaining": 0,
+                "token_based_billing": true,
+            ],
+        ],
+    ] as [String: Any])
+    let windows = GitHubCopilotUsageProvider.windows(from: result)
+    let window = try #require(windows.first)
     let reading = UsageReading(
         providerId: "copilot",
         label: "GitHub Copilot",
         accountId: nil,
         authMode: "subscription",
         source: "copilot_internal_user",
-        windows: [window],
+        windows: windows,
         status: .live,
         observedAt: Date(),
         error: nil
     )
 
-    #expect(ProviderIcon.percentageText(for: window) == "4909")
-    #expect(ProviderIcon.percentageText(for: reading) == "4909")
-    #expect(ProviderIcon.accessibilityText(for: window) == "4909 credits used")
-    #expect(ProviderIcon.percentageText(for: window).contains("%") == false)
+    #expect(window.used == 4909)
+    #expect(window.limit == 1_900)
+    #expect(abs(window.usedPercent - (4_909.0 / 1_900.0 * 100)) < 0.000001)
+    #expect(window.fraction == 1)
+    #expect(ProviderIcon.percentageText(for: window) == "258%")
+    #expect(ProviderIcon.percentageText(for: reading) == "258%")
+    #expect(ProviderIcon.accessibilityText(for: window) == "258% used")
 }
 
 @MainActor
@@ -132,10 +143,10 @@ func copilotBusinessCreditsDoNotBecomeAZeroPercentCapacityWindow() throws {
             windows: [
                 UsageWindow(
                     id: "premium_interactions",
-                    label: "Credits used",
+                    label: "Included credits",
                     used: 4909,
-                    limit: 0,
-                    usedPercent: 0,
+                    limit: 1_900,
+                    usedPercent: 4_909.0 / 1_900.0 * 100,
                     windowMinutes: nil,
                     resetsAt: nil
                 )
@@ -148,8 +159,10 @@ func copilotBusinessCreditsDoNotBecomeAZeroPercentCapacityWindow() throws {
 
     let window = try #require(CapacitySnapshot.make(from: store).resources.first { $0.id == "copilot" }?.capacity.windows.first)
     #expect(window.used == 4909)
-    #expect(window.limit == 0)
-    #expect(window.usedPercent == nil)
+    #expect(window.limit == 1_900)
+    #expect(window.usedPercent != nil)
+    #expect(window.usedPercent != 0)
+    #expect(abs((window.usedPercent ?? 0) - (4_909.0 / 1_900.0 * 100)) < 0.000001)
 }
 
 @MainActor
