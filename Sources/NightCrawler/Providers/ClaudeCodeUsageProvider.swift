@@ -34,7 +34,7 @@ struct ClaudeCodeUsageProvider: UsageProvider {
     var isAvailable: Bool { true }
 
     func read() async -> UsageReading {
-        if let cached = readingFromLocalCache() {
+        if let cached = readingFromLocalCache(), Self.isFresh(cached) {
             return cached
         }
         guard let token = await credentials.read() else {
@@ -108,6 +108,12 @@ struct ClaudeCodeUsageProvider: UsageProvider {
     private func readFromLocalOrCLI() async -> UsageReading {
         if let cached = readingFromLocalCache() { return cached }
         return await readFromCLI()
+    }
+
+    private static func isFresh(_ reading: UsageReading, now: Date = Date()) -> Bool {
+        guard let observedAt = reading.observedAt else { return false }
+        let age = now.timeIntervalSince(observedAt)
+        return age <= CapacitySnapshot.liveFreshnessInterval && age >= -120
     }
 
     private func readingFromLocalCache() -> UsageReading? {

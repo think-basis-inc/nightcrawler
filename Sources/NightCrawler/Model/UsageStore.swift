@@ -248,6 +248,13 @@ final class UsageStore: ObservableObject {
         readings.sort(by: readingComesBefore)
     }
 
+    private static func isTransientRefreshFailure(_ status: UsageReading.ReadingStatus) -> Bool {
+        switch status {
+        case .error, .needsAuth: return true
+        case .live, .unknown: return false
+        }
+    }
+
     private func updateReading(_ incoming: UsageReading) {
         let reading = UsageReading(
             providerId: incoming.providerId,
@@ -262,7 +269,9 @@ final class UsageStore: ObservableObject {
         )
         if let index = readings.firstIndex(where: { $0.providerId == reading.providerId }) {
             let previous = readings[index]
-            if reading.status != .live, previous.status == .live, !previous.windows.isEmpty {
+            if Self.isTransientRefreshFailure(reading.status),
+               previous.status == .live,
+               !previous.windows.isEmpty {
                 let observedAt = previous.observedAt ?? .distantPast
                 let remainsLive = Date().timeIntervalSince(observedAt) <= CapacitySnapshot.liveFreshnessInterval
                 readings[index] = UsageReading(

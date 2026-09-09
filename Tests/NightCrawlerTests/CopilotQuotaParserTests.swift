@@ -119,3 +119,47 @@ func copilotBillingUsageBecomesMonthlyUsedPercentage() throws {
     #expect(abs(window.usedPercent - 13.6666666667) < 0.000001)
     #expect(window.resetsAt == ISO8601DateFormatter().date(from: "2026-10-01T00:00:00Z"))
 }
+
+@Test
+func copilotEmptyBillingItemsDoNotInventZeroPercentOfTheConfiguredPlan() throws {
+    let now = try #require(ISO8601DateFormatter().date(from: "2026-09-09T17:40:00Z"))
+    let result = CopilotQuotaParser.parseBilling(
+        ["usageItems": [Any](), "timePeriod": "2026-09"],
+        planLimit: 300,
+        now: now
+    )
+
+    #expect(result.windows.isEmpty, "empty GitHub billing items are not 0% of a Settings plan limit")
+    #expect(result.status != .live)
+}
+
+@Test
+func copilotUnlimitedCLIPlusEmptyBillingStaysUnknown() throws {
+    var raw = try loadQuotaFixture()
+    guard var snapshots = raw["quotaSnapshots"] as? [String: Any] else {
+        throw URLError(.cannotDecodeContentData)
+    }
+    for key in ["premium_interactions", "chat", "completions"] {
+        guard var snapshot = snapshots[key] as? [String: Any] else { continue }
+        snapshot["entitlementRequests"] = 0
+        snapshot["usedRequests"] = 0
+        snapshot["remainingPercentage"] = 100
+        snapshot["isUnlimitedEntitlement"] = true
+        snapshots[key] = snapshot
+    }
+    raw["quotaSnapshots"] = snapshots
+
+    let cli = CopilotQuotaParser.parse(raw)
+    let billing = CopilotQuotaParser.parseBilling(
+        ["usageItems": [Any]()],
+        planLimit: 300,
+        now: try #require(ISO8601DateFormatter().date(from: "2026-09-09T17:40:00Z"))
+    )
+    let result = GitHubCopilotUsageProvider.reconcile(cli: cli, billing: billing)
+
+    #expect(cli.windows.isEmpty)
+    #expect(billing.windows.isEmpty)
+    #expect(result.windows.isEmpty)
+    #expect(result.status != .live)
+    #expect(result.windows.contains { $0.usedPercent == 0 } == false)
+}

@@ -73,30 +73,22 @@ struct CursorUsageProvider: UsageProvider {
         }()
         var windows: [UsageWindow] = []
 
-        if let cursorModels = (plan["autoPercentUsed"] as? NSNumber)?.doubleValue {
-            windows.append(percentWindow(
-                id: "cursor_models",
-                label: "Cursor Models",
-                percent: cursorModels,
-                windowMinutes: windowMinutes,
-                resetsAt: end
-            ))
-        }
-        if let otherModels = (plan["apiPercentUsed"] as? NSNumber)?.doubleValue {
-            windows.append(percentWindow(
-                id: "other_models",
-                label: "Other Models",
-                percent: otherModels,
-                windowMinutes: windowMinutes,
-                resetsAt: end
-            ))
-        }
-        if windows.isEmpty,
-           let totalPercent = (plan["totalPercentUsed"] as? NSNumber)?.doubleValue {
+        // Dashboard headline is totalPercentUsed, not autoPercentUsed or used/limit.
+        if let totalPercent = percent(plan["totalPercentUsed"])
+            ?? percent(plan["autoPercentUsed"]) {
             windows.append(percentWindow(
                 id: "included",
                 label: "Included usage",
                 percent: totalPercent,
+                windowMinutes: windowMinutes,
+                resetsAt: end
+            ))
+        }
+        if let apiPercent = percent(plan["apiPercentUsed"]) {
+            windows.append(percentWindow(
+                id: "api",
+                label: "API usage",
+                percent: apiPercent,
                 windowMinutes: windowMinutes,
                 resetsAt: end
             ))
@@ -155,6 +147,15 @@ struct CursorUsageProvider: UsageProvider {
             accountID: ProviderHelpers.sha256Prefix(account),
             cookie: "WorkosCursorSessionToken=\(account)::\(token)"
         )
+    }
+
+    private static func percent(_ value: Any?) -> Double? {
+        if value is Bool { return nil }
+        if let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() {
+            let percent = number.doubleValue
+            return percent.isFinite && percent >= 0 && percent <= 1_000 ? percent : nil
+        }
+        return nil
     }
 
     private static func spendWindow(_ value: Any?, id: String, label: String, resetsAt: Date?) -> UsageWindow? {

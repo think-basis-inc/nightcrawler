@@ -96,6 +96,39 @@ func transientFailureKeepsTheLastGoodProviderReading() async throws {
 
 @MainActor
 @Test
+func successfulUnknownQuotaReplacesInventedLastGoodZero() async throws {
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let provider = MockProvider(id: "copilot", label: "GitHub Copilot")
+    let store = UsageStore(providers: [provider], defaults: defaults)
+    store.enabledProviderIds = ["copilot"]
+    store.readings = [fixtureReading(id: "copilot", percent: 0, observedAt: Date().addingTimeInterval(-30))]
+    provider.nextReading = UsageReading(
+        providerId: "copilot",
+        label: "GitHub Copilot",
+        accountId: nil,
+        authMode: "subscription",
+        source: "copilot_account_quota",
+        windows: [],
+        status: .unknown,
+        observedAt: nil,
+        error: "Copilot did not report a finite subscription allowance"
+    )
+
+    await store.refresh()
+
+    let reading = try #require(store.readings.first { $0.providerId == "copilot" })
+    #expect(reading.status == .unknown)
+    #expect(reading.windows.isEmpty)
+    #expect(ProviderIcon.percentageText(for: reading) == nil)
+    let resource = try #require(CapacitySnapshot.make(from: store).resources.first { $0.id == "copilot" })
+    #expect(resource.capacity.windows.isEmpty)
+    #expect(resource.capacity.status == .unknown)
+}
+
+@MainActor
+@Test
 func expiredLastGoodReadingDoesNotRemainLiveAfterARefreshFailure() async throws {
     let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suiteName)!

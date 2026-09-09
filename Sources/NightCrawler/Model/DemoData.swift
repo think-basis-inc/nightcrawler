@@ -38,8 +38,8 @@ enum DemoData {
                 authMode: "subscription",
                 source: "demo",
                 windows: [
-                    UsageWindow(id: "cursor_models", label: "Cursor Models", used: 3900, limit: 10000, usedPercent: 39, windowMinutes: 43200, resetsAt: now.addingTimeInterval(12 * 86400)),
-                    UsageWindow(id: "other_models", label: "Other Models", used: 100, limit: 10000, usedPercent: 1, windowMinutes: 43200, resetsAt: now.addingTimeInterval(12 * 86400))
+                    UsageWindow(id: "included", label: "Included usage", used: 4200, limit: 10000, usedPercent: 42, windowMinutes: 43200, resetsAt: now.addingTimeInterval(12 * 86400)),
+                    UsageWindow(id: "api", label: "API usage", used: 200, limit: 10000, usedPercent: 2, windowMinutes: 43200, resetsAt: now.addingTimeInterval(12 * 86400))
                 ],
                 status: .live,
                 observedAt: now,

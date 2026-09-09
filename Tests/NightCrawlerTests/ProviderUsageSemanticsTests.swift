@@ -100,7 +100,7 @@ func providersWithoutFiniteUsageDoNotRenderPlaceholderDashes() {
 }
 
 @Test
-func cursorModelsAndOtherModelsUseSeparateConcentricRings() throws {
+func cursorIncludedAndApiUseSeparateConcentricRings() throws {
     let reading = UsageReading(
         providerId: "cursor",
         label: "Cursor",
@@ -108,16 +108,16 @@ func cursorModelsAndOtherModelsUseSeparateConcentricRings() throws {
         authMode: "subscription",
         source: "fixture",
         windows: [
-            UsageWindow(id: "cursor_models", label: "Cursor Models", used: 39, limit: 100, usedPercent: 39, windowMinutes: nil, resetsAt: nil),
-            UsageWindow(id: "other_models", label: "Other Models", used: 1, limit: 100, usedPercent: 1, windowMinutes: nil, resetsAt: nil),
+            UsageWindow(id: "included", label: "Included usage", used: 42, limit: 100, usedPercent: 42, windowMinutes: nil, resetsAt: nil),
+            UsageWindow(id: "api", label: "API usage", used: 2, limit: 100, usedPercent: 2, windowMinutes: nil, resetsAt: nil),
         ],
         status: .live,
         observedAt: Date(),
         error: nil
     )
 
-    #expect(try #require(reading.outerRingWindow).id == "cursor_models")
-    #expect(try #require(reading.innerRingWindow).id == "other_models")
+    #expect(try #require(reading.outerRingWindow).id == "included")
+    #expect(try #require(reading.innerRingWindow).id == "api")
 }
 
 @Test
@@ -136,10 +136,62 @@ func cursorUsageSummaryPreservesBothModelBuckets() throws {
 
     let windows = try #require(CursorUsageProvider.windows(from: root))
 
-    #expect(windows.map(\.id) == ["cursor_models", "other_models"])
-    #expect(windows.map(\.label) == ["Cursor Models", "Other Models"])
-    #expect(windows.map(\.usedPercent) == [39.285, 0.3])
+    #expect(windows.map(\.id) == ["included", "api"])
+    #expect(windows.map(\.label) == ["Included usage", "API usage"])
+    #expect(windows.map(\.usedPercent) == [33.716, 0.3])
     #expect(windows.allSatisfy { $0.windowMinutes == 43_200 })
+}
+
+@MainActor
+@Test
+func cursorHeadlineMatchesIncludedTotalNotAutoPoolOrSpentLimit() throws {
+    // Live Ultra shape: dashboard copy is "You've used 42% of your included total usage"
+    // while autoPercentUsed is 49% and used/limit is 40000/40000 (100%).
+    let root: [String: Any] = [
+        "billingCycleStart": "2026-08-11T23:36:44Z",
+        "billingCycleEnd": "2026-09-11T23:36:44Z",
+        "autoModelSelectedDisplayMessage": "You've used 42% of your included total usage",
+        "namedModelSelectedDisplayMessage": "You've used 2% of your included API usage",
+        "individualUsage": [
+            "plan": [
+                "enabled": true,
+                "used": 40_000,
+                "limit": 40_000,
+                "remaining": 0,
+                "breakdown": [
+                    "included": 40_000,
+                    "bonus": 108_312,
+                    "total": 148_312,
+                ],
+                "autoPercentUsed": 49.13333333333333,
+                "apiPercentUsed": 1.8239999999999998,
+                "totalPercentUsed": 42.374857142857145,
+            ],
+        ],
+    ]
+
+    let windows = try #require(CursorUsageProvider.windows(from: root))
+    let reading = UsageReading(
+        providerId: "cursor",
+        label: "Cursor",
+        accountId: nil,
+        authMode: "subscription",
+        source: "cursor_editor_usage",
+        windows: windows,
+        status: .live,
+        observedAt: Date(),
+        error: nil
+    )
+
+    #expect(windows.map(\.id) == ["included", "api"])
+    #expect(windows.map(\.label) == ["Included usage", "API usage"])
+    #expect(windows.map(\.usedPercent) == [42.374857142857145, 1.8239999999999998])
+    #expect(windows.contains { $0.usedPercent == 49.13333333333333 } == false)
+    #expect(windows.contains { abs($0.usedPercent - 100) < 0.0001 } == false)
+    #expect(try #require(reading.outerRingWindow).id == "included")
+    #expect(try #require(reading.outerRingWindow).usedPercent == 42.374857142857145)
+    #expect(try #require(reading.innerRingWindow).id == "api")
+    #expect(ProviderIcon.percentageText(for: reading) == "42%")
 }
 
 @MainActor

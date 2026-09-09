@@ -2,6 +2,14 @@ import Foundation
 import Testing
 @testable import NightCrawler
 
+private func utilizationJSON(fetchedAt: Date) -> Data {
+    var root = try! JSONSerialization.jsonObject(with: Data(sampleUtilizationJSON.utf8)) as! [String: Any]
+    var cache = root["cachedUsageUtilization"] as! [String: Any]
+    cache["fetchedAtMs"] = fetchedAt.timeIntervalSince1970 * 1000
+    root["cachedUsageUtilization"] = cache
+    return try! JSONSerialization.data(withJSONObject: root)
+}
+
 private let sampleUtilizationJSON = """
 {
     "cachedUsageUtilization": {
@@ -70,7 +78,7 @@ func claudeProviderPrefersLocalCacheOverOAuthSoMonitoringDoesNotNeedALiveConnect
     )
     let cache = ClaudeLocalUsageCache(
         fileURL: URL(fileURLWithPath: "/fixture/claude.json"),
-        reader: { _ in Data(sampleUtilizationJSON.utf8) }
+        reader: { _ in utilizationJSON(fetchedAt: Date()) }
     )
     let spy = OAuthCallSpy()
     let provider = ClaudeCodeUsageProvider(
@@ -98,6 +106,17 @@ func claudeLocalUsageCacheIgnoresStaleClaudeCodeSnapshots() {
     #expect(windows.isEmpty)
 }
 
+@Test
+func claudeLocalUsageCacheDropsWindowsThatHaveAlreadyReset() throws {
+    // fetchedAt 05:21, session resets 06:50, weekly resets Sep 11 19:00.
+    let now = Date(timeIntervalSince1970: 1_788_851_200) // 2026-09-08T07:06:40Z
+    let windows = ClaudeLocalUsageCache.windows(from: Data(sampleUtilizationJSON.utf8), now: now)
+
+    #expect(windows.contains { $0.id == "session" } == false, "session reset at 06:50 and must not stay at 7%")
+    #expect(windows.contains { $0.id == "weekly_all" && $0.usedPercent == 59 })
+    #expect(windows.contains { $0.id == "weekly_scoped" && $0.usedPercent == 94 })
+}
+
 @MainActor
 @Test
 func claudeProviderUsesLocalClaudeCodeCacheWhenCLIReturnsAPIBillingSession() async {
@@ -107,7 +126,7 @@ func claudeProviderUsesLocalClaudeCodeCacheWhenCLIReturnsAPIBillingSession() asy
     )
     let cache = ClaudeLocalUsageCache(
         fileURL: URL(fileURLWithPath: "/fixture/claude.json"),
-        reader: { _ in Data(sampleUtilizationJSON.utf8) }
+        reader: { _ in utilizationJSON(fetchedAt: Date().addingTimeInterval(-16 * 60 * 60)) }
     )
     let provider = ClaudeCodeUsageProvider(
         credentials: credentials,

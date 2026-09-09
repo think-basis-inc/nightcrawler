@@ -76,10 +76,16 @@ enum CopilotQuotaParser {
             return .empty(status: .error, error: "GitHub returned invalid Copilot billing metadata")
         }
 
-        let used = items.reduce(0.0) { total, item in
-            guard item["product"] as? String == "Copilot",
-                  let amount = number(item["grossQuantity"])
-            else { return total }
+        let copilotItems = items.filter { $0["product"] as? String == "Copilot" }
+        guard !copilotItems.isEmpty else {
+            return .empty(
+                status: .unknown,
+                error: "GitHub returned no Copilot premium-request usage"
+            )
+        }
+
+        let used = copilotItems.reduce(0.0) { total, item in
+            guard let amount = number(item["grossQuantity"]) else { return total }
             return total + amount
         }
         guard used.isFinite else {
