@@ -58,7 +58,7 @@ NightCrawler reads credentials the tools already store locally. Install and sign
 | Claude Code | Claude Code’s `~/.claude.json` usage cache (no live session). OAuth and local `/usage` are fallbacks only when that cache is missing. |
 | Codex CLI | Current local session rate-limit snapshots, with `~/.codex/auth.json` as the backend fallback |
 | Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
-| GitHub Copilot | Copilot CLI metadata, then `gh api` premium-request billing when the CLI reports no finite allowance |
+| GitHub Copilot | Copilot CLI metadata, then `gh api copilot_internal/user` (the VS Code quota snapshot, including Business `credits_used`), then premium-request billing |
 | Grok | `~/.grok/auth.json` |
 | Devin | Direct account-quota request using the existing Devin CLI login (`~/.local/share/devin/credentials.toml`, or XDG data home) |
 | Cubic | Direct read-only GitHub check lookup using `gh` authentication; configure owner/repository in Settings. Last reported allowance, not a live balance. No review is triggered. |
@@ -66,7 +66,7 @@ NightCrawler reads credentials the tools already store locally. Install and sign
 | Antigravity | `gemini` / `antigravity` Keychain item |
 | ZCode / GLM | `~/.claude/settings.json`, `~/.zcode/v2/config.json`, or `~/.local/share/opencode/auth.json` |
 
-Copilot billing percentages need the matching monthly plan limit selected in Settings (Free 50, Pro 300, or Pro+ 1500). GitHub’s billing endpoint also requires one-time **Plan: read** authorization on the existing `gh` login; NightCrawler never reads or stores the GitHub token.
+Copilot Business/Enterprise seats have no per-user percent quota — NightCrawler shows the vendor `credits_used` count from `/copilot_internal/user`, not 0% of a Settings plan limit. Individual premium-request percentages still need the matching monthly plan limit in Settings (Free 50, Pro 300, or Pro+ 1500). GitHub’s billing endpoint also requires one-time **Plan: read** authorization on the existing `gh` login; NightCrawler never reads or stores the GitHub token.
 
 ## Demo mode
 

@@ -84,7 +84,9 @@ struct CapacitySnapshot: Codable, Equatable, Sendable {
                 return CapacityWindow(
                     id: window.id,
                     label: window.label,
-                    usedPercent: window.usedPercent,
+                    used: window.used,
+                    limit: window.limit,
+                    usedPercent: window.limit > 0 ? window.usedPercent : nil,
                     resetsAt: window.resetsAt,
                     observedAt: observedAt,
                     freshness: freshness
@@ -140,7 +142,9 @@ enum CapacityFreshness: String, Codable, Sendable {
 struct CapacityWindow: Codable, Equatable, Sendable {
     let id: String
     let label: String
-    let usedPercent: Double
+    let used: Int
+    let limit: Int
+    let usedPercent: Double?
     let resetsAt: Date?
     let observedAt: Date?
     let freshness: CapacityFreshness

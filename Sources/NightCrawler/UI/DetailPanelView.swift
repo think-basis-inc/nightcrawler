@@ -82,20 +82,24 @@ struct WindowRow: View {
             .font(Typography.cardBody)
             .lineLimit(1)
 
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Palette.barTrack)
-                    .frame(width: trackWidth, height: HUDLayout.barHeight)
-                Capsule()
-                    .fill(band.color)
-                    .frame(width: fillWidth, height: HUDLayout.barHeight)
+            if window.limit > 0 {
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Palette.barTrack)
+                        .frame(width: trackWidth, height: HUDLayout.barHeight)
+                    Capsule()
+                        .fill(band.color)
+                        .frame(width: fillWidth, height: HUDLayout.barHeight)
+                }
+                .padding(.top, HUDLayout.labelToBar)
             }
-            .padding(.top, HUDLayout.labelToBar)
 
-            Text("\(ProviderIcon.percentageText(for: window)) Used")
+            Text(window.limit > 0
+                 ? "\(ProviderIcon.percentageText(for: window)) Used"
+                 : "\(window.used) credits used")
                 .font(Typography.cardBody)
                 .foregroundStyle(Palette.textPrimary)
-                .padding(.top, HUDLayout.barToUsed)
+                .padding(.top, window.limit > 0 ? HUDLayout.barToUsed : HUDLayout.labelToBar)
         }
     }
 

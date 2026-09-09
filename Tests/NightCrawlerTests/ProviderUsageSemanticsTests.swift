@@ -83,6 +83,77 @@ func compactUsageTextNamesTheDirection() {
 
 @MainActor
 @Test
+func copilotBusinessCreditsUsedShowAsACountNotAPercentOrBlank() {
+    let window = UsageWindow(
+        id: "premium_interactions",
+        label: "Credits used",
+        used: 4909,
+        limit: 0,
+        usedPercent: 0,
+        windowMinutes: nil,
+        resetsAt: ISO8601DateFormatter().date(from: "2026-10-01T00:00:00Z")
+    )
+    let reading = UsageReading(
+        providerId: "copilot",
+        label: "GitHub Copilot",
+        accountId: nil,
+        authMode: "subscription",
+        source: "copilot_internal_user",
+        windows: [window],
+        status: .live,
+        observedAt: Date(),
+        error: nil
+    )
+
+    #expect(ProviderIcon.percentageText(for: window) == "4909")
+    #expect(ProviderIcon.percentageText(for: reading) == "4909")
+    #expect(ProviderIcon.accessibilityText(for: window) == "4909 credits used")
+    #expect(ProviderIcon.percentageText(for: window).contains("%") == false)
+}
+
+@MainActor
+@Test
+func copilotBusinessCreditsDoNotBecomeAZeroPercentCapacityWindow() throws {
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = UsageStore(
+        providers: [SemanticCatalogProvider(id: "copilot", label: "GitHub Copilot")],
+        defaults: defaults
+    )
+    store.enabledProviderIds = ["copilot"]
+    store.readings = [
+        UsageReading(
+            providerId: "copilot",
+            label: "GitHub Copilot",
+            accountId: nil,
+            authMode: "subscription",
+            source: "copilot_internal_user",
+            windows: [
+                UsageWindow(
+                    id: "premium_interactions",
+                    label: "Credits used",
+                    used: 4909,
+                    limit: 0,
+                    usedPercent: 0,
+                    windowMinutes: nil,
+                    resetsAt: nil
+                )
+            ],
+            status: .live,
+            observedAt: Date(),
+            error: nil
+        )
+    ]
+
+    let window = try #require(CapacitySnapshot.make(from: store).resources.first { $0.id == "copilot" }?.capacity.windows.first)
+    #expect(window.used == 4909)
+    #expect(window.limit == 0)
+    #expect(window.usedPercent == nil)
+}
+
+@MainActor
+@Test
 func providersWithoutFiniteUsageDoNotRenderPlaceholderDashes() {
     let reading = UsageReading(
         providerId: "cubic",

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Reads GitHub Copilot quota through the Copilot CLI's metadata-only
-/// stdio JSON-RPC (ping → auth.getStatus → account.getQuota).
+/// stdio JSON-RPC, then `GET /copilot_internal/user`, then premium-request billing.
 struct GitHubCopilotUsageProvider: UsageProvider {
     let id = "copilot"
     let label = "GitHub Copilot"
@@ -19,8 +19,11 @@ struct GitHubCopilotUsageProvider: UsageProvider {
         }
         var result = await CopilotRPCClient(command: command, timeout: 19).query()
         if result.windows.isEmpty, result.status != .needsAuth {
-            let billing = await CopilotBillingClient(planLimit: CopilotPlanSettings.current()).query()
-            result = Self.reconcile(cli: result, billing: billing)
+            let client = CopilotBillingClient(planLimit: CopilotPlanSettings.current())
+            result = Self.reconcile(cli: result, billing: await client.queryInternalUser())
+            if result.windows.isEmpty, result.status != .needsAuth {
+                result = Self.reconcile(cli: result, billing: await client.query())
+            }
         }
         return map(result)
     }
@@ -45,12 +48,23 @@ struct GitHubCopilotUsageProvider: UsageProvider {
 
     private func map(_ result: CopilotQuotaParser.Result) -> UsageReading {
         let windows = result.windows.map { window in
-            UsageWindow(
+            if window.displaysPercent {
+                return UsageWindow(
+                    id: window.id,
+                    label: window.label,
+                    used: Int(window.usedPercent.rounded()),
+                    limit: 100,
+                    usedPercent: window.usedPercent,
+                    windowMinutes: nil,
+                    resetsAt: window.resetsAt
+                )
+            }
+            return UsageWindow(
                 id: window.id,
                 label: window.label,
-                used: Int(window.usedPercent.rounded()),
-                limit: 100,
-                usedPercent: window.usedPercent,
+                used: window.usedCount ?? 0,
+                limit: 0,
+                usedPercent: 0,
                 windowMinutes: nil,
                 resetsAt: window.resetsAt
             )
@@ -67,7 +81,7 @@ struct GitHubCopilotUsageProvider: UsageProvider {
             label: label,
             accountId: result.accountId,
             authMode: result.authMode,
-            source: "copilot_account_quota",
+            source: result.source,
             windows: windows,
             status: status,
             observedAt: windows.isEmpty ? nil : Date(),

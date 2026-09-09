@@ -6,6 +6,8 @@ enum CopilotQuotaParser {
         var label: String
         var usedPercent: Double
         var resetsAt: Date?
+        var usedCount: Int? = nil
+        var displaysPercent: Bool = true
     }
 
     struct Result: Equatable, Sendable {
@@ -18,6 +20,7 @@ enum CopilotQuotaParser {
         var error: String?
         var accountId: String?
         var authMode: String
+        var source: String = "copilot_account_quota"
 
         static func empty(
             status: Status = .unknown,
@@ -68,6 +71,40 @@ enum CopilotQuotaParser {
         return Result(status: .live, windows: windows, error: nil, accountId: nil, authMode: "unknown")
     }
 
+    /// VS Code / `GET /copilot_internal/user` (snake_case `quota_snapshots`).
+    static func parseInternalUser(_ raw: Any) -> Result {
+        guard let dict = raw as? [String: Any] else {
+            return .empty(status: .error, error: "Copilot returned invalid quota metadata")
+        }
+        guard let snapshots = dict["quota_snapshots"] as? [String: Any] else {
+            return .empty(status: .error, error: "Copilot returned invalid quota metadata")
+        }
+        let reset = dateOnly(dict["quota_reset_date"])
+            ?? epoch(dict["quota_reset_date"])
+            ?? dateOnly(dict["quota_reset_date_utc"])
+            ?? epoch(dict["quota_reset_date_utc"])
+
+        var windows: [Window] = []
+        for (key, label) in labels {
+            guard let snapshot = snapshots[key] as? [String: Any],
+                  let window = internalSnapshot(key: key, label: label, snapshot: snapshot, reset: reset)
+            else { continue }
+            windows.append(window)
+        }
+
+        if windows.isEmpty {
+            return .empty(error: "Copilot did not report a finite subscription allowance")
+        }
+        return Result(
+            status: .live,
+            windows: windows,
+            error: nil,
+            accountId: nil,
+            authMode: "subscription",
+            source: "copilot_internal_user"
+        )
+    }
+
     static func parseBilling(_ raw: Any, planLimit: Int, now: Date) -> Result {
         guard planLimit > 0, planLimit <= 1_000_000,
               let dict = raw as? [String: Any],
@@ -102,7 +139,45 @@ enum CopilotQuotaParser {
             usedPercent: used / Double(planLimit) * 100,
             resetsAt: reset
         )
-        return Result(status: .live, windows: [window], error: nil, accountId: nil, authMode: "subscription")
+        return Result(
+            status: .live,
+            windows: [window],
+            error: nil,
+            accountId: nil,
+            authMode: "subscription",
+            source: "copilot_billing"
+        )
+    }
+
+    private static func internalSnapshot(
+        key: String,
+        label: String,
+        snapshot: [String: Any],
+        reset: Date?
+    ) -> Window? {
+        let unlimited = snapshot["unlimited"] as? Bool == true
+        let entitlement = number(snapshot["entitlement"]) ?? 0
+        if !unlimited, entitlement > 0,
+           let remaining = number(snapshot["percent_remaining"]), remaining <= 100 {
+            return Window(
+                id: key,
+                label: label,
+                usedPercent: 100 - remaining,
+                resetsAt: reset ?? epoch(snapshot["reset_date"]) ?? dateOnly(snapshot["reset_date"]),
+                displaysPercent: true
+            )
+        }
+        guard key == "premium_interactions",
+              let credits = number(snapshot["credits_used"])
+        else { return nil }
+        return Window(
+            id: key,
+            label: "Credits used",
+            usedPercent: 0,
+            resetsAt: reset ?? epoch(snapshot["reset_date"]) ?? dateOnly(snapshot["reset_date"]),
+            usedCount: Int(credits.rounded()),
+            displaysPercent: false
+        )
     }
 
     private static func number(_ value: Any?) -> Double? {
@@ -129,5 +204,15 @@ enum CopilotQuotaParser {
         let plain = ISO8601DateFormatter()
         plain.formatOptions = [.withInternetDateTime]
         return plain.date(from: string)
+    }
+
+    private static func dateOnly(_ value: Any?) -> Date? {
+        guard let string = value as? String, string.count == 10 else { return nil }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: string)
     }
 }

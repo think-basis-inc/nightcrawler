@@ -30,6 +30,24 @@ final class CopilotBillingClient: @unchecked Sendable {
         await Task.detached { [self] in querySynchronously() }.value
     }
 
+    func queryInternalUser() async -> CopilotQuotaParser.Result {
+        await Task.detached { [self] in queryInternalUserSynchronously() }.value
+    }
+
+    private func queryInternalUserSynchronously() -> CopilotQuotaParser.Result {
+        guard let executable = command.first else {
+            return .empty(error: "GitHub CLI is required for Copilot usage")
+        }
+        let usageResult = runner([executable, "api", "copilot_internal/user"], 12, 1_048_576)
+        guard usageResult.exitCode == 0 else {
+            return .empty(status: .needsAuth, error: "Sign in to GitHub CLI to read Copilot usage")
+        }
+        guard let raw = try? JSONSerialization.jsonObject(with: usageResult.stdout) else {
+            return .empty(status: .error, error: "GitHub returned invalid Copilot usage metadata")
+        }
+        return CopilotQuotaParser.parseInternalUser(raw)
+    }
+
     private func querySynchronously() -> CopilotQuotaParser.Result {
         guard let executable = command.first else {
             return .empty(error: "GitHub CLI is required for Copilot premium-request usage")

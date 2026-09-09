@@ -14,11 +14,11 @@ struct ProviderIcon: View {
                     .stroke(Palette.ringTrack, lineWidth: HUDLayout.trackStroke)
                     .frame(width: HUDLayout.ringDiameter, height: HUDLayout.ringDiameter)
 
-                if reading.status == .live, let outer = reading.outerRingWindow {
+                if reading.status == .live, let outer = reading.outerRingWindow, outer.limit > 0 {
                     usageArc(window: outer, inset: HUDLayout.trackStroke / 2, lineWidth: HUDLayout.progressStroke)
                 }
 
-                if reading.status == .live, let inner = reading.innerRingWindow {
+                if reading.status == .live, let inner = reading.innerRingWindow, inner.limit > 0 {
                     usageArc(
                         window: inner,
                         inset: HUDLayout.trackStroke + HUDLayout.progressStroke,
@@ -115,6 +115,9 @@ struct ProviderIcon: View {
     }
 
     static func percentageText(for window: UsageWindow) -> String {
+        if window.limit <= 0 {
+            return "\(window.used)"
+        }
         if window.usedPercent > 0, window.usedPercent < 0.1 {
             return "<0.1%"
         }
@@ -130,7 +133,10 @@ struct ProviderIcon: View {
     }
 
     static func accessibilityText(for window: UsageWindow) -> String {
-        "\(percentageText(for: window)) used"
+        if window.limit <= 0 {
+            return "\(window.used) credits used"
+        }
+        return "\(percentageText(for: window)) used"
     }
 
     private var helpText: String {

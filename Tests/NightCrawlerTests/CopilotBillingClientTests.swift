@@ -5,9 +5,14 @@ import Testing
 private final class BillingRunnerSpy: @unchecked Sendable {
     var calls: [[String]] = []
     var billingExitCode: Int32 = 0
+    var internalUserBody: String?
 
     func run(_ command: [String], _: TimeInterval, _: Int) -> BillingCommandResult {
         calls.append(command)
+        if command.contains("copilot_internal/user") {
+            let body = internalUserBody ?? #"{"quota_snapshots":{}}"#
+            return BillingCommandResult(exitCode: 0, stdout: Data(body.utf8))
+        }
         if command.contains("user") {
             return BillingCommandResult(exitCode: 0, stdout: Data("fixture-user\n".utf8))
         }
@@ -52,6 +57,30 @@ func copilotBillingClientExplainsMissingPlanReadScope() async throws {
 
     #expect(result.status == .needsAuth)
     #expect(result.error?.contains("Plan read access") == true)
+}
+
+@Test
+func copilotInternalUserClientUsesGhWithoutReadingOrPassingAToken() async throws {
+    let spy = BillingRunnerSpy()
+    spy.internalUserBody = """
+    {"copilot_plan":"business","token_based_billing":true,"quota_reset_date":"2026-10-01","quota_snapshots":{"premium_interactions":{"credits_used":4909,"entitlement":0,"unlimited":true,"percent_remaining":100,"remaining":0,"token_based_billing":true}}}
+    """
+    let client = CopilotBillingClient(
+        command: ["/fixture/gh"],
+        planLimit: 300,
+        runner: spy.run
+    )
+
+    let result = await client.queryInternalUser()
+    let window = try #require(result.windows.first)
+
+    #expect(result.status == .live)
+    #expect(window.usedCount == 4909)
+    #expect(window.displaysPercent == false)
+    #expect(spy.calls.count == 1)
+    #expect(spy.calls[0].contains("copilot_internal/user"))
+    #expect(spy.calls.flatMap { $0 }.allSatisfy { !$0.lowercased().contains("token") })
+    #expect(spy.calls.flatMap { $0 }.contains { $0.contains("premium_request") } == false)
 }
 
 @Test
