@@ -6,27 +6,36 @@ struct CodexCLIUsageProvider: UsageProvider {
     let id = "codex"
     let label = "Codex CLI"
 
-    private static let authPath = ("~/.codex/auth.json" as NSString).expandingTildeInPath
+    private let authPath: String
     private let sessionUsage: CodexSessionUsageReader
 
-    init(sessionUsage: CodexSessionUsageReader = CodexSessionUsageReader()) {
+    init(
+        sessionUsage: CodexSessionUsageReader = CodexSessionUsageReader(),
+        authPath: String = ("~/.codex/auth.json" as NSString).expandingTildeInPath
+    ) {
         self.sessionUsage = sessionUsage
+        self.authPath = authPath
     }
 
     var isAvailable: Bool {
         loadCredentials() != nil
     }
 
+    static func sessionIsFresh(_ reading: UsageReading, now: Date = Date()) -> Bool {
+        guard let observedAt = reading.observedAt else { return false }
+        let age = now.timeIntervalSince(observedAt)
+        return age <= CapacitySnapshot.liveFreshnessInterval && age >= -120
+    }
+
     func read() async -> UsageReading {
         let sessionReading = sessionUsage.read()
-        if let sessionReading,
-           let observedAt = sessionReading.observedAt,
-           Date().timeIntervalSince(observedAt) < 15 * 60 {
+        if let sessionReading, Self.sessionIsFresh(sessionReading) {
             return sessionReading
         }
+        // An older session log is a past value, not current usage: usage from
+        // other machines keeps moving while this Mac's logs stand still.
         guard let credentials = loadCredentials() else {
-            return sessionReading
-                ?? makeReading(status: .needsAuth, error: "Sign in to Codex CLI to read usage")
+            return makeReading(status: .needsAuth, error: "Codex sign-in expired; run codex login")
         }
 
         var request = URLRequest(
@@ -45,12 +54,10 @@ struct CodexCLIUsageProvider: UsageProvider {
                 return makeReading(status: .error("Bad response"))
             }
             if http.statusCode == 401 || http.statusCode == 403 {
-                return sessionReading
-                    ?? makeReading(status: .needsAuth, error: "Codex CLI session expired")
+                return makeReading(status: .needsAuth, error: "Codex sign-in was revoked; run codex login")
             }
             guard http.statusCode == 200 else {
-                return sessionReading
-                    ?? makeReading(status: .error("ChatGPT returned \(http.statusCode)"))
+                return makeReading(status: .error("ChatGPT returned \(http.statusCode)"))
             }
 
             let decoder = JSONDecoder()
@@ -72,13 +79,12 @@ struct CodexCLIUsageProvider: UsageProvider {
                 error: nil
             )
         } catch {
-            return sessionReading
-                ?? makeReading(status: .error("Codex usage request failed"))
+            return makeReading(status: .error("Codex usage request failed"))
         }
     }
 
     private func loadCredentials() -> Credentials? {
-        guard let root = ProviderHelpers.readJSONObject(at: Self.authPath),
+        guard let root = ProviderHelpers.readJSONObject(at: authPath),
               let tokens = root["tokens"] as? [String: Any],
               let accessToken = ProviderHelpers.nonEmptyString(tokens["access_token"]),
               let accountID = ProviderHelpers.nonEmptyString(tokens["account_id"])

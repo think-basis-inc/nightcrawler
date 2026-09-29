@@ -11,6 +11,7 @@ enum HUDLayout {
     static let trackStroke = Design.px(15.5)
     static let progressStroke = Design.px(8)
     static let innerProgressStroke = Design.px(5.5)
+    static let coreProgressStroke = Design.px(4)
     static let glyphSize = Design.px(46)
     static let ringLabelGap = Design.px(26.9)
     static let percentLineHeight = Design.px(27)
@@ -148,7 +149,7 @@ enum HUDLayout {
 
     static let defaultMaxCardHeight = max(
         cardHeight(windowCount: 4),
-        settingsCardHeight(providerCount: 11, routingToolCount: 2)
+        settingsCardHeight(providerCount: 12, routingToolCount: 2)
     )
 
     static func panelSize(cellCount: Int, edge: NotchEdge) -> CGSize {

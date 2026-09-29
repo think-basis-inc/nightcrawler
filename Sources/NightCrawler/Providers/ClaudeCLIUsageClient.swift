@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 
 enum ClaudeCLIUsageParser {
-    static func windows(from data: Data) -> [UsageWindow] {
+    static func windows(from data: Data, now: Date = Date()) -> [UsageWindow] {
         guard var text = String(data: data, encoding: .utf8) else { return [] }
         text = text.replacingOccurrences(
             of: #"\u{001B}\[[0-?]*[ -/]*[@-~]"#,
@@ -18,20 +18,101 @@ enum ClaudeCLIUsageParser {
         return definitions.compactMap { definition in
             guard let labelIndex = lines.lastIndex(where: { $0.contains(definition.label) }) else { return nil }
             let end = min(lines.endIndex, labelIndex + 6)
-            for line in lines[(labelIndex + 1)..<end] where line.localizedCaseInsensitiveContains("used") {
-                guard let percent = firstPercent(in: line) else { continue }
-                return UsageWindow(
-                    id: definition.id,
-                    label: definition.title,
-                    used: Int(percent * 100),
-                    limit: 10_000,
-                    usedPercent: percent,
-                    windowMinutes: definition.minutes,
-                    resetsAt: nil
-                )
-            }
-            return nil
+            let block = lines[(labelIndex + 1)..<end]
+            guard let usedLine = block.first(where: { $0.localizedCaseInsensitiveContains("used") }),
+                  let percent = firstPercent(in: usedLine)
+            else { return nil }
+            return UsageWindow(
+                id: definition.id,
+                label: definition.title,
+                used: Int(percent * 100),
+                limit: 10_000,
+                usedPercent: percent,
+                windowMinutes: definition.minutes,
+                resetsAt: resetInstant(from: block, now: now)
+            )
         }
+    }
+
+    static func resetInstant(from lines: ArraySlice<String>, now: Date) -> Date? {
+        for line in lines {
+            if let date = parseResetLine(line, now: now) { return date }
+        }
+        return nil
+    }
+
+    static func parseResetLine(_ line: String, now: Date) -> Date? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.localizedCaseInsensitiveContains("reset") else { return nil }
+
+        var zone = TimeZone.current
+        var core = trimmed
+        if let open = trimmed.lastIndex(of: "("),
+           let close = trimmed.lastIndex(of: ")"),
+           open < close {
+            let identifier = String(trimmed[trimmed.index(after: open)..<close])
+            if let parsed = TimeZone(identifier: identifier) {
+                zone = parsed
+            }
+            core = String(trimmed[..<open]).trimmingCharacters(in: .whitespaces)
+        }
+        core = core.replacingOccurrences(of: "Resets", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "Reset", with: "", options: .caseInsensitive)
+            .trimmingCharacters(in: .whitespaces)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        let formats = [
+            "MMM d 'at' h:mma",
+            "MMM d 'at' ha",
+            "MMM d h:mma",
+            "h:mma",
+            "ha",
+            "h:mm a",
+            "h a",
+        ]
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = zone
+        formatter.calendar = calendar
+        formatter.defaultDate = now
+
+        let compact = core
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: ".", with: "")
+            .lowercased()
+        let spaced = core
+            .replacingOccurrences(of: ".", with: "")
+            .replacingOccurrences(of: "  ", with: " ")
+
+        for candidate in [core, spaced, compact] {
+            for format in formats {
+                formatter.dateFormat = format
+                if let parsed = formatter.date(from: candidate) {
+                    return datedReset(parsed, now: now, calendar: calendar, format: format)
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func datedReset(_ parsed: Date, now: Date, calendar: Calendar, format: String) -> Date {
+        var components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: parsed)
+        let nowParts = calendar.dateComponents([.year, .month, .day], from: now)
+        if !format.contains("MMM") {
+            components.year = nowParts.year
+            components.month = nowParts.month
+            components.day = nowParts.day
+        } else if components.year == nil {
+            components.year = nowParts.year
+        }
+        guard var date = calendar.date(from: components) else { return parsed }
+        if !format.contains("MMM"), date <= now {
+            date = calendar.date(byAdding: .day, value: 1, to: date) ?? date
+        } else if format.contains("MMM"), date.addingTimeInterval(12 * 60 * 60) < now {
+            date = calendar.date(byAdding: .year, value: 1, to: date) ?? date
+        }
+        return date
     }
 
     private static func firstPercent(in line: String) -> Double? {

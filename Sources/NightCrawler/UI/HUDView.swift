@@ -14,15 +14,23 @@ struct ProviderIcon: View {
                     .stroke(Palette.ringTrack, lineWidth: HUDLayout.trackStroke)
                     .frame(width: HUDLayout.ringDiameter, height: HUDLayout.ringDiameter)
 
-                if reading.status == .live, let outer = reading.outerRingWindow, outer.limit > 0 {
+                if reading.isFreshlyObserved(), let outer = reading.outerRingWindow, outer.limit > 0 {
                     usageArc(window: outer, inset: HUDLayout.trackStroke / 2, lineWidth: HUDLayout.progressStroke)
                 }
 
-                if reading.status == .live, let inner = reading.innerRingWindow, inner.limit > 0 {
+                if reading.isFreshlyObserved(), let inner = reading.innerRingWindow, inner.limit > 0 {
                     usageArc(
                         window: inner,
                         inset: HUDLayout.trackStroke + HUDLayout.progressStroke,
                         lineWidth: HUDLayout.innerProgressStroke
+                    )
+                }
+
+                if reading.isFreshlyObserved(), let core = reading.thirdRingWindow, core.limit > 0 {
+                    usageArc(
+                        window: core,
+                        inset: HUDLayout.trackStroke + HUDLayout.progressStroke + HUDLayout.innerProgressStroke,
+                        lineWidth: HUDLayout.coreProgressStroke
                     )
                 }
 
@@ -108,27 +116,18 @@ struct ProviderIcon: View {
 
     private var percentageAccessibilityText: String {
         guard !reading.status.isError else { return "Unavailable" }
-        guard let window = reading.outerRingWindow else {
+        guard let summary = Self.ringSummary(for: reading) else {
             return reading.error ?? "No finite allowance reported"
         }
-        return Self.accessibilityText(for: window)
+        return summary
     }
 
     static func percentageText(for window: UsageWindow) -> String {
-        if window.limit <= 0 {
-            return "\(window.used)"
-        }
-        if window.usedPercent > 0, window.usedPercent < 0.1 {
-            return "<0.1%"
-        }
-        if window.usedPercent > 0, window.usedPercent < 1 {
-            return String(format: "%.1f%%", window.usedPercent)
-        }
-        return "\(Int(window.usedPercent))%"
+        UsagePercentText.display(percent: window.usedPercent, used: window.used, limit: window.limit)
     }
 
-    static func percentageText(for reading: UsageReading) -> String? {
-        guard reading.status == .live, let window = reading.outerRingWindow else { return nil }
+    static func percentageText(for reading: UsageReading, now: Date = Date()) -> String? {
+        guard reading.isFreshlyObserved(now: now), let window = reading.outerRingWindow else { return nil }
         return percentageText(for: window)
     }
 
@@ -137,6 +136,14 @@ struct ProviderIcon: View {
             return "\(window.used) credits used"
         }
         return "\(percentageText(for: window)) used"
+    }
+
+    static func ringSummary(for reading: UsageReading, now: Date = Date()) -> String? {
+        guard reading.isFreshlyObserved(now: now) else { return nil }
+        let rings = [reading.outerRingWindow, reading.innerRingWindow, reading.thirdRingWindow]
+            .compactMap { $0 }
+        guard !rings.isEmpty else { return nil }
+        return rings.map { "\(percentageText(for: $0)) used in \($0.label)" }.joined(separator: ", ")
     }
 
     private var helpText: String {
@@ -148,8 +155,10 @@ struct ProviderIcon: View {
         case .unknown:
             return "\(reading.label): \(reading.error ?? "no finite allowance reported")"
         case .live:
-            guard let window = reading.outerRingWindow else { return "\(reading.label): no reading" }
-            return "\(reading.label): \(Self.accessibilityText(for: window)) in \(window.label)"
+            guard let summary = Self.ringSummary(for: reading) else {
+                return "\(reading.label): last reading is stale"
+            }
+            return "\(reading.label): \(summary)"
         }
     }
 }
@@ -184,6 +193,7 @@ extension ProviderGlyph {
         case "cursor": return .cursor
         case "copilot": return .copilot
         case "grok": return .grok
+        case "grokbot": return .grokbot
         case "gemini", "antigravity": return .antigravity
         case "opencode": return .opencode
         case "zcode": return .glm

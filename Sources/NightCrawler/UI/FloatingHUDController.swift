@@ -1,4 +1,5 @@
 import Cocoa
+import Combine
 import QuartzCore
 import SwiftUI
 
@@ -16,7 +17,8 @@ final class FloatingHUDController: ObservableObject {
     private var keyMonitor: Any?
     private var globalMouseMoveMonitor: Any?
     private var localMouseMoveMonitor: Any?
-    private var readingsWatch: Task<Void, Never>?
+    private var readingsWatch: AnyCancellable?
+    private var lastRailCount = 0
     private var pointerWatch: Task<Void, Never>?
     private var pendingHide: Task<Void, Never>?
     private var globalHotKey: GlobalHotKey?
@@ -237,19 +239,18 @@ final class FloatingHUDController: ObservableObject {
 
     private func watchReadings() {
         readingsWatch?.cancel()
-        readingsWatch = Task { [weak self] in
-            guard let self else { return }
-            var lastCount = store.orderedReadings.count
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(400))
-                let count = store.orderedReadings.count
-                if count != lastCount {
-                    lastCount = count
-                    surface.preserveAcrossRefresh()
-                    relocate()
-                }
+        lastRailCount = store.orderedReadings.count
+        readingsWatch = store.$readings
+            .combineLatest(store.$enabledProviderIds, store.$routingToolStates, store.$providerOrder)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _, _, _, _ in
+                guard let self else { return }
+                let count = self.store.orderedReadings.count
+                guard count != self.lastRailCount else { return }
+                self.lastRailCount = count
+                self.surface.preserveAcrossRefresh()
+                self.relocate()
             }
-        }
     }
 
     private func installMonitors() {

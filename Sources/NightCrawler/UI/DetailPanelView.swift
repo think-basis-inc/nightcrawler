@@ -36,9 +36,15 @@ struct DetailPanelView: View {
                     .padding(.top, HUDLayout.headerToBlock)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(reading.windows.enumerated()), id: \.element.id) { index, window in
+                    if !reading.isFreshlyObserved() {
+                        Text("Last reading is stale")
+                            .font(Typography.cardBody)
+                            .foregroundStyle(Palette.textSecondary)
+                            .padding(.top, HUDLayout.headerToBlock)
+                    }
+                    ForEach(Array(reading.displayWindows.enumerated()), id: \.element.id) { index, window in
                         WindowRow(window: window)
-                            .padding(.top, index == 0 ? HUDLayout.headerToBlock : HUDLayout.blockSpacing)
+                            .padding(.top, index == 0 && reading.isFreshlyObserved() ? HUDLayout.headerToBlock : HUDLayout.blockSpacing)
                     }
                 }
             }
@@ -75,7 +81,7 @@ struct WindowRow: View {
                     .foregroundStyle(Palette.textPrimary)
                 Spacer(minLength: 0)
                 if let reset = window.resetsAt {
-                    Text(relativeTime(reset))
+                    Text(ResetClock.caption(for: reset))
                         .foregroundStyle(Palette.textSecondary)
                 }
             }
@@ -94,26 +100,10 @@ struct WindowRow: View {
                 .padding(.top, HUDLayout.labelToBar)
             }
 
-            Text(usedCaption)
+            Text(UsageCaption.line(for: window))
                 .font(Typography.cardBody)
                 .foregroundStyle(Palette.textPrimary)
                 .padding(.top, window.limit > 0 ? HUDLayout.barToUsed : HUDLayout.labelToBar)
         }
-    }
-
-    private var usedCaption: String {
-        if window.limit == CopilotBusinessCredits.includedPool, window.limit > 0 {
-            return "\(window.used) of \(window.limit) credits"
-        }
-        if window.limit > 0 {
-            return "\(ProviderIcon.percentageText(for: window)) Used"
-        }
-        return "\(window.used) credits used"
-    }
-
-    private func relativeTime(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }

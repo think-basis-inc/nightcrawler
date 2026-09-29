@@ -30,19 +30,25 @@ enum RestrictedProcess {
     }
 
     static func terminateAndWait(_ process: Process, grace: TimeInterval = 0.25) {
-        guard process.isRunning else {
-            process.waitUntilExit()
-            return
-        }
-        process.terminate()
-        let deadline = Date().addingTimeInterval(max(grace, 0))
-        while process.isRunning, Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.01)
-        }
+        let pid = process.processIdentifier
         if process.isRunning {
-            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+            process.terminate()
+            let deadline = Date().addingTimeInterval(max(grace, 0))
+            while process.isRunning, Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+            if process.isRunning {
+                _ = Darwin.kill(pid, SIGKILL)
+                let killDeadline = Date().addingTimeInterval(0.2)
+                while process.isRunning, Date() < killDeadline {
+                    Thread.sleep(forTimeInterval: 0.01)
+                }
+            }
         }
-        process.waitUntilExit()
+        if pid > 0 {
+            var status: Int32 = 0
+            _ = waitpid(pid, &status, WNOHANG)
+        }
     }
 
     static func resolveOnPath(

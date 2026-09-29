@@ -21,30 +21,37 @@ final class UsageStore: ObservableObject {
     private let providers: [UsageProvider]
     private let defaults: UserDefaults
     private let claudeCredentials: ClaudeCredentialStore
+    private let providerReadBudget: TimeInterval
     private var timer: Timer?
+    private var cursorTimer: Timer?
     private var isPolling = false
+    private var queuedPoll = false
     private var demoReadings: [UsageReading]?
     private var deniedProviderIds: Set<String> = []
     private var keychainProviderIds: Set<String> = ["antigravity"]
 
     private static let enabledDefaultsKey = "enabledProviderIds"
     private static let claudeDefaultEnabledMigrationKey = "migratedDefaultEnabledClaude"
+    private static let grokBotDefaultEnabledMigrationKey = "migratedDefaultEnabledGrokBot"
     private let orderDefaultsKey = "providerOrder"
     private let routingToolsDefaultsKey = "routingToolStates"
     private static let defaultEnabledProviderIds: Set<String> = [
-        "claude", "codex", "cursor", "grok", "opencode", "zcode",
+        "claude", "codex", "cursor", "grokbot", "grok", "opencode", "zcode",
     ]
 
     init(
         providers: [UsageProvider] = UsageStore.defaultProviders(),
         defaults: UserDefaults = .standard,
-        claudeCredentials: ClaudeCredentialStore = .shared
+        claudeCredentials: ClaudeCredentialStore = .shared,
+        providerReadBudget: TimeInterval = 20
     ) {
         self.providers = providers
         self.defaults = defaults
         self.claudeCredentials = claudeCredentials
+        self.providerReadBudget = providerReadBudget
         let providerIds = providers.map(\.id)
         Self.migrateClaudeDefaultEnabled(defaults: defaults)
+        Self.migrateGrokBotDefaultEnabled(defaults: defaults)
         let saved = defaults.array(forKey: Self.enabledDefaultsKey) as? [String]
         self.enabledProviderIds = saved.map(Set.init) ?? Self.defaultEnabledProviderIds
         self.providerOrder = Self.normalizedOrder(
@@ -111,11 +118,26 @@ final class UsageStore: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { await self?.poll() }
         }
+        startCursorRefreshTimer()
     }
 
     func stopPolling() {
         timer?.invalidate()
         timer = nil
+        cursorTimer?.invalidate()
+        cursorTimer = nil
+    }
+
+    private func startCursorRefreshTimer() {
+        cursorTimer?.invalidate()
+        cursorTimer = nil
+        guard demoReadings == nil, isProviderEnabled("cursor") else { return }
+        cursorTimer = Timer.scheduledTimer(
+            withTimeInterval: CursorUsageProvider.liveRefreshInterval,
+            repeats: true
+        ) { [weak self] _ in
+            Task { await self?.refresh(providerId: "cursor") }
+        }
     }
 
     func setCubicUsageRepository(_ repository: String) {
@@ -149,7 +171,7 @@ final class UsageStore: ObservableObject {
         }
         guard let provider = providers.first(where: { $0.id == providerId }) else { return }
         let cubicSource = cubicUsageRepository
-        let reading = await provider.read()
+        let reading = await Self.readWithBudget(provider, budget: providerReadBudget)
         guard providerId != "cubic" || cubicSource == cubicUsageRepository else { return }
         updateReading(reading)
         if case .needsAuth = reading.status, keychainProviderIds.contains(providerId) {
@@ -168,12 +190,14 @@ final class UsageStore: ObservableObject {
         } else {
             enabledProviderIds.insert(providerId)
             deniedProviderIds.remove(providerId)
+            ensurePlaceholders()
             if let demoReading = demoReadings?.first(where: { $0.providerId == providerId }) {
                 updateReading(demoReading)
             } else {
                 Task { await refresh(providerId: providerId) }
             }
         }
+        if providerId == "cursor" { startCursorRefreshTimer() }
     }
 
     func setDemoMode(_ enabled: Bool, readings: [UsageReading] = DemoData.readings) {
@@ -224,15 +248,28 @@ final class UsageStore: ObservableObject {
     }
 
     func poll() async {
-        guard !isPolling else { return }
-        isPolling = true
-        defer { isPolling = false }
+        if isPolling {
+            queuedPoll = true
+            return
+        }
+        repeat {
+            queuedPoll = false
+            isPolling = true
+            defer { isPolling = false }
+            await runPoll()
+        } while queuedPoll
+    }
+
+    private func runPoll() async {
         let cubicSource = cubicUsageRepository
         await claudeCredentials.allowRetry()
         let enabled = providers.filter { isProviderEnabled($0.id) && !deniedProviderIds.contains($0.id) }
         await withTaskGroup(of: UsageReading.self) { group in
             for provider in enabled {
-                group.addTask { await provider.read() }
+                let budget = providerReadBudget
+                group.addTask {
+                    await Self.readWithBudget(provider, budget: budget)
+                }
             }
             for await reading in group {
                 if reading.providerId == "cubic", cubicSource != cubicUsageRepository { continue }
@@ -246,6 +283,36 @@ final class UsageStore: ObservableObject {
         }
         ensurePlaceholders()
         readings.sort(by: readingComesBefore)
+    }
+
+    nonisolated private static func readWithBudget(_ provider: UsageProvider, budget: TimeInterval) async -> UsageReading {
+        await withCheckedContinuation { continuation in
+            let gate = OnceGate()
+            Task {
+                let reading = await provider.read()
+                gate.go { continuation.resume(returning: reading) }
+            }
+            Task {
+                try? await Task.sleep(for: .seconds(max(budget, 0.05)))
+                gate.go {
+                    continuation.resume(returning: timeoutReading(for: provider))
+                }
+            }
+        }
+    }
+
+    nonisolated private static func timeoutReading(for provider: UsageProvider) -> UsageReading {
+        UsageReading(
+            providerId: provider.id,
+            label: provider.label,
+            accountId: nil,
+            authMode: "unknown",
+            source: "timeout",
+            windows: [],
+            status: .error("Usage refresh timed out"),
+            observedAt: nil,
+            error: "Usage refresh timed out"
+        )
     }
 
     private static func isTransientRefreshFailure(_ status: UsageReading.ReadingStatus) -> Bool {
@@ -272,8 +339,7 @@ final class UsageStore: ObservableObject {
             if Self.isTransientRefreshFailure(reading.status),
                previous.status == .live,
                !previous.windows.isEmpty {
-                let observedAt = previous.observedAt ?? .distantPast
-                let remainsLive = Date().timeIntervalSince(observedAt) <= CapacitySnapshot.liveFreshnessInterval
+                let remainsLive = previous.isFreshlyObserved()
                 readings[index] = UsageReading(
                     providerId: previous.providerId,
                     label: previous.label,
@@ -287,29 +353,30 @@ final class UsageStore: ObservableObject {
                 )
                 return
             }
-            if reading.providerId == "claude",
-               previous.status == .live,
-               let priorFable = previous.windows.first(where: { $0.id == "fable" || $0.id == "weekly_scoped" }),
-               let priorFableObservedAt = priorFable.observedAt ?? previous.observedAt,
-               Date().timeIntervalSince(priorFableObservedAt) <= PersistedReadingCache.maxAge,
-               !reading.windows.contains(where: { $0.id == "fable" || $0.id == "weekly_scoped" }) {
-                var mergedWindows = reading.windows
-                mergedWindows.append(priorFable.observed(at: priorFableObservedAt))
-                readings[index] = UsageReading(
-                    providerId: reading.providerId,
-                    label: reading.label,
-                    accountId: reading.accountId ?? previous.accountId,
-                    authMode: reading.authMode,
-                    source: reading.source,
-                    windows: mergedWindows,
-                    status: reading.status,
-                    observedAt: reading.observedAt ?? previous.observedAt,
-                    error: reading.error
+            if previous.status == .live,
+               let keepers = Self.limitWindowKeepers(for: reading.providerId) {
+                let mergedWindows = Self.carryForwardLimitWindows(
+                    from: previous,
+                    into: reading.windows,
+                    keepers: keepers
                 )
-                if reading.status == .live, !mergedWindows.isEmpty {
-                    PersistedReadingCache.save(readings, defaults: defaults)
+                if mergedWindows != reading.windows {
+                    readings[index] = UsageReading(
+                        providerId: reading.providerId,
+                        label: reading.label,
+                        accountId: reading.accountId ?? previous.accountId,
+                        authMode: reading.authMode,
+                        source: reading.source,
+                        windows: mergedWindows,
+                        status: reading.status,
+                        observedAt: reading.observedAt ?? previous.observedAt,
+                        error: reading.error
+                    )
+                    if reading.status == .live, !mergedWindows.isEmpty {
+                        PersistedReadingCache.save(readings, defaults: defaults)
+                    }
+                    return
                 }
-                return
             }
             readings[index] = reading
         } else {
@@ -318,6 +385,37 @@ final class UsageStore: ObservableObject {
         if reading.status == .live, !reading.windows.isEmpty {
             PersistedReadingCache.save(readings, defaults: defaults)
         }
+    }
+
+    private static func limitWindowKeepers(for providerId: String) -> [[String]]? {
+        switch providerId {
+        case "claude":
+            return [["weekly_all"], ["fable", "weekly_scoped"]]
+        case "cursor":
+            return [["included", "auto", "cursor_models"], ["api", "other_models"]]
+        default:
+            return nil
+        }
+    }
+
+    private static func carryForwardLimitWindows(
+        from previous: UsageReading,
+        into incoming: [UsageWindow],
+        keepers: [[String]],
+        now: Date = Date()
+    ) -> [UsageWindow] {
+        var merged = incoming
+        for ids in keepers {
+            guard !merged.contains(where: { ids.contains($0.id) }) else { continue }
+            guard let prior = previous.windows.first(where: { ids.contains($0.id) }) else { continue }
+            if let resetsAt = prior.resetsAt, resetsAt <= now { continue }
+            let observedAt = prior.observedAt ?? previous.observedAt
+            if let observedAt, now.timeIntervalSince(observedAt) > PersistedReadingCache.maxAge {
+                continue
+            }
+            merged.append(prior.observed(at: observedAt))
+        }
+        return merged
     }
 
     private func ensurePlaceholders() {
@@ -353,6 +451,16 @@ final class UsageStore: ObservableObject {
               !ids.contains("claude")
         else { return }
         ids.append("claude")
+        defaults.set(ids, forKey: enabledDefaultsKey)
+    }
+
+    private static func migrateGrokBotDefaultEnabled(defaults: UserDefaults) {
+        guard !defaults.bool(forKey: grokBotDefaultEnabledMigrationKey) else { return }
+        defaults.set(true, forKey: grokBotDefaultEnabledMigrationKey)
+        guard var ids = defaults.array(forKey: enabledDefaultsKey) as? [String],
+              !ids.contains("grokbot")
+        else { return }
+        ids.append("grokbot")
         defaults.set(ids, forKey: enabledDefaultsKey)
     }
 
@@ -397,6 +505,7 @@ final class UsageStore: ObservableObject {
             ClaudeCodeUsageProvider(),
             CodexCLIUsageProvider(),
             CursorUsageProvider(),
+            GrokBotUsageProvider(),
             GitHubCopilotUsageProvider(),
             GrokUsageProvider(),
             DevinUsageProvider(),
@@ -406,5 +515,21 @@ final class UsageStore: ObservableObject {
             AntigravityUsageProvider(),
             ZCodeUsageProvider(),
         ]
+    }
+}
+
+private final class OnceGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+
+    func go(_ body: () -> Void) {
+        lock.lock()
+        if done {
+            lock.unlock()
+            return
+        }
+        done = true
+        lock.unlock()
+        body()
     }
 }
