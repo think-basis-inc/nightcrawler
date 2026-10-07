@@ -41,6 +41,13 @@ enum HUDIconAction: Equatable {
     case signIn(ProviderSignIn)
     case toggleDetail
 
+    static func shouldRetry(for reading: UsageReading, opensDetail: Bool) -> Bool {
+        // Denials pause polling, so either direction of an explicit card toggle
+        // must offer a retry, even when last-good usage still looks live.
+        reading.source == UsageReading.keychainDeniedSource
+            || (opensDetail && reading.status.isError)
+    }
+
     static func resolve(
         for reading: UsageReading,
         isInstalled: (ProviderSignIn) -> Bool = ProviderSignIn.isInstalled

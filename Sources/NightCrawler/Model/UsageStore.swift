@@ -379,9 +379,9 @@ final class UsageStore: ObservableObject {
                previous.status == .live,
                !previous.windows.isEmpty {
                 let remainsLive = previous.isFreshlyObserved()
-                // A denied keychain prompt must stay recognizable behind the
-                // retained windows, or it would read as a sign-out.
-                let keepsDenial = !remainsLive && reading.source == UsageReading.keychainDeniedSource
+                // Keep denials recognizable even while cached usage is live,
+                // so an explicit icon click can retry the paused provider.
+                let keepsDenial = reading.source == UsageReading.keychainDeniedSource
                 readings[index] = UsageReading(
                     providerId: previous.providerId,
                     label: previous.label,

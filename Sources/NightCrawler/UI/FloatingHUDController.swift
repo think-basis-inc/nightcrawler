@@ -166,7 +166,7 @@ final class FloatingHUDController: ObservableObject {
     private func toggleDetail(for reading: UsageReading) {
         reveal(animated: true)
         surface.selectProvider(reading.providerId)
-        if reading.status.isError, surface.selectedProviderId == reading.providerId {
+        if HUDIconAction.shouldRetry(for: reading, opensDetail: surface.selectedProviderId == reading.providerId) {
             Task { await store.refresh(providerId: reading.providerId) }
         }
         relocate()

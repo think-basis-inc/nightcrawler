@@ -400,3 +400,64 @@ func pollingDoesNotRepeatADeniedKeychainPromptBehindCachedUsage() async throws {
 
     #expect(denial.readCount == 1, "a denied prompt must not be raised again by the next polls")
 }
+
+@MainActor
+@Test(arguments: [nil, 60.0, 3600.0] as [TimeInterval?])
+func keychainDenialRemainsRecognizableUntilExplicitRetry(cacheAge: TimeInterval?) async throws {
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let provider = SignInSequenceProvider(
+        id: "antigravity", signedOutReads: 1, signedOutSource: UsageReading.keychainDeniedSource
+    )
+    let store = UsageStore(providers: [provider], defaults: defaults)
+    store.enabledProviderIds = ["antigravity"]
+    let observedAt = cacheAge.map { Date().addingTimeInterval(-$0) }
+    if let observedAt {
+        store.readings = [UsageReading(
+            providerId: "antigravity", label: "Antigravity", accountId: nil, authMode: "subscription",
+            source: "last_good_cache",
+            windows: [UsageWindow(id: "daily", label: "Daily", used: 40, limit: 100,
+                                  usedPercent: 40, windowMinutes: 1440, resetsAt: nil)],
+            status: .live, observedAt: observedAt, error: nil
+        )]
+    }
+
+    await store.poll()
+    let denied = try #require(store.readings.first)
+    #expect(denied.source == UsageReading.keychainDeniedSource,
+            "retaining fresh usage must not hide the denial needed by the icon retry path")
+    #expect(!denied.isSignedOut)
+    #expect(HUDIconAction.resolve(for: denied, isInstalled: { _ in true }) == .toggleDetail)
+    if let cacheAge {
+        #expect(denied.windows.first?.usedPercent == 40)
+        #expect(denied.observedAt == observedAt)
+        #expect(denied.status == (cacheAge < CapacitySnapshot.liveFreshnessInterval ? .live : .needsAuth))
+    } else {
+        #expect(denied.windows.isEmpty)
+    }
+
+    await store.poll()
+    #expect(provider.readCount == 1, "automatic polling must remain paused after denial")
+    await store.refresh(providerId: "antigravity")
+    #expect(provider.readCount == 2, "an explicit retry must read the provider again")
+    #expect(store.readings.first?.status == .live)
+    #expect(store.readings.first?.source != UsageReading.keychainDeniedSource)
+}
+
+@Test(arguments: [UsageReading.ReadingStatus.live, .needsAuth], [true, false])
+func deniedIconsRetryWhenOpeningOrClosingTheirCard(status: UsageReading.ReadingStatus, opensDetail: Bool) {
+    let denied = reading("antigravity", status: status, source: UsageReading.keychainDeniedSource)
+    #expect(HUDIconAction.shouldRetry(for: denied, opensDetail: opensDetail),
+            "a denial must be retryable even when retained usage is live or the card is already open")
+}
+
+@Test
+func ordinaryIconClicksKeepTheirExistingRefreshBehavior() {
+    let live = reading("antigravity", status: .live)
+    #expect(!HUDIconAction.shouldRetry(for: live, opensDetail: true))
+    #expect(!HUDIconAction.shouldRetry(for: live, opensDetail: false))
+    let failed = reading("antigravity", status: .error("Request timed out"))
+    #expect(HUDIconAction.shouldRetry(for: failed, opensDetail: true))
+    #expect(!HUDIconAction.shouldRetry(for: failed, opensDetail: false))
+}
