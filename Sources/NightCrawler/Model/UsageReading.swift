@@ -71,6 +71,14 @@ struct UsageReading: Identifiable, Equatable, Sendable {
         return windows.sorted { rank($0.id) < rank($1.id) }
     }
 
+    /// The provider answered that its sign-in is missing or expired. A pending
+    /// placeholder has not asked the provider yet, so it is not signed out.
+    var isSignedOut: Bool {
+        status == .needsAuth && source != UsageReading.pendingSource
+    }
+
+    static let pendingSource = "pending"
+
     func isFreshlyObserved(now: Date = Date()) -> Bool {
         guard status == .live, !windows.isEmpty else { return false }
         if providerId == "cubic" {

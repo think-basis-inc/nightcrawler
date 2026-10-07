@@ -149,7 +149,10 @@ struct ProviderIcon: View {
     private var helpText: String {
         switch reading.status {
         case .needsAuth:
-            return "\(reading.label): sign in required"
+            guard HUDIconAction.resolve(for: reading) != .toggleDetail else {
+                return "\(reading.label): sign in required"
+            }
+            return "\(reading.label): signed out. Click to sign in"
         case .error(let error):
             return "\(reading.label): \(error)"
         case .unknown:

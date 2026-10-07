@@ -24,6 +24,7 @@ final class FloatingHUDController: ObservableObject {
     private var globalHotKey: GlobalHotKey?
     private var normalFrame: CGRect?
     private var isRevealed = true
+    private let signInLauncher = ProviderSignInLauncher()
 
     private let defaultsEdgeKey = "hudEdge"
 
@@ -142,6 +143,24 @@ final class FloatingHUDController: ObservableObject {
         }
     }
 
+    private func handleIconClick(_ reading: UsageReading) {
+        switch HUDIconAction.resolve(for: reading) {
+        case .signIn(let method):
+            signIn(reading, using: method)
+        case .toggleDetail:
+            toggleDetail(for: reading)
+        }
+    }
+
+    private func signIn(_ reading: UsageReading, using method: ProviderSignIn) {
+        reveal(animated: true)
+        surface.mode = .detail(providerId: reading.providerId)
+        if signInLauncher.launch(method, providerId: reading.providerId) {
+            store.watchSignIn(providerId: reading.providerId)
+        }
+        relocate()
+    }
+
     private func toggleDetail(for reading: UsageReading) {
         reveal(animated: true)
         surface.selectProvider(reading.providerId)
@@ -198,7 +217,11 @@ final class FloatingHUDController: ObservableObject {
             isAutoHideEnabled: isAutoHideEnabled,
             railFitScale: currentRailFitScale,
             onSelect: { [weak self] reading in
-                self?.toggleDetail(for: reading)
+                self?.handleIconClick(reading)
+            },
+            onSignIn: { [weak self] reading in
+                guard let method = ProviderSignIn.method(for: reading.providerId) else { return }
+                self?.signIn(reading, using: method)
             },
             onSettings: { [weak self] in
                 self?.showSettings()

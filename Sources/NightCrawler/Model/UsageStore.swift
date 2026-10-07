@@ -29,6 +29,7 @@ final class UsageStore: ObservableObject {
     private var demoReadings: [UsageReading]?
     private var deniedProviderIds: Set<String> = []
     private var keychainProviderIds: Set<String> = ["antigravity"]
+    private var signInWatches: [String: Task<Void, Never>] = [:]
 
     private static let enabledDefaultsKey = "enabledProviderIds"
     private static let claudeDefaultEnabledMigrationKey = "migratedDefaultEnabledClaude"
@@ -176,6 +177,28 @@ final class UsageStore: ObservableObject {
         updateReading(reading)
         if case .needsAuth = reading.status, keychainProviderIds.contains(providerId) {
             deniedProviderIds.insert(providerId)
+        }
+    }
+
+    /// Re-reads a provider while the user finishes signing in elsewhere, so the
+    /// ring returns as soon as the tool saves its credentials instead of on
+    /// the next minute-long poll. Stops at the first reading that is no longer
+    /// signed out, or after `attempts`.
+    func watchSignIn(
+        providerId: String,
+        interval: Duration = .seconds(5),
+        attempts: Int = 60
+    ) {
+        signInWatches[providerId]?.cancel()
+        signInWatches[providerId] = Task { [weak self] in
+            for _ in 0..<attempts {
+                try? await Task.sleep(for: interval)
+                guard !Task.isCancelled, let self else { return }
+                await self.refresh(providerId: providerId)
+                let reading = self.readings.first { $0.providerId == providerId }
+                if reading?.isSignedOut != true { break }
+            }
+            self?.signInWatches[providerId] = nil
         }
     }
 
@@ -427,7 +450,7 @@ final class UsageStore: ObservableObject {
                         label: provider.label,
                         accountId: nil,
                         authMode: "unknown",
-                        source: "pending",
+                        source: UsageReading.pendingSource,
                         windows: [],
                         status: .needsAuth,
                         observedAt: nil,

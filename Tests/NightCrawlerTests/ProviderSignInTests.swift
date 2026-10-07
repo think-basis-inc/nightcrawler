@@ -1,0 +1,192 @@
+import Foundation
+import Testing
+@testable import NightCrawler
+
+private func reading(
+    _ providerId: String,
+    status: UsageReading.ReadingStatus,
+    source: String = "provider"
+) -> UsageReading {
+    UsageReading(
+        providerId: providerId,
+        label: providerId.capitalized,
+        accountId: nil,
+        authMode: "unknown",
+        source: source,
+        windows: [],
+        status: status,
+        observedAt: nil,
+        error: status == .needsAuth ? "Sign-in expired" : nil
+    )
+}
+
+@Test
+func clickingASignedOutIconStartsThatToolsOwnLogin() {
+    // Each tool's documented login entry point (its CLI help or desktop app).
+    let expected: [String: ProviderSignIn] = [
+        "codex": .terminal(command: "codex", arguments: ["login"]),
+        "claude": .terminal(command: "claude", arguments: ["auth", "login"]),
+        "grok": .terminal(command: "grok", arguments: ["login"]),
+        "opencode": .terminal(command: "opencode", arguments: ["auth", "login"]),
+        "copilot": .terminal(command: "copilot", arguments: ["login"]),
+        "devin": .terminal(command: "devin", arguments: ["auth", "login"]),
+        "cubic": .terminal(command: "gh", arguments: ["auth", "login"]),
+        "cursor": .app(bundleIdentifier: "com.todesktop.230313mzl4w4u92", name: "Cursor"),
+        "grokbot": .app(bundleIdentifier: "com.todesktop.230313mzl4w4u92", name: "Cursor"),
+        "antigravity": .app(bundleIdentifier: "com.google.antigravity", name: "Antigravity"),
+    ]
+    for (providerId, method) in expected {
+        #expect(HUDIconAction.resolve(for: reading(providerId, status: .needsAuth)) == .signIn(method),
+                "\(providerId) should start its own sign-in")
+    }
+}
+
+@Test
+func iconsThatAreNotSignedOutKeepOpeningTheirCard() {
+    #expect(HUDIconAction.resolve(for: reading("codex", status: .live)) == .toggleDetail)
+    #expect(HUDIconAction.resolve(for: reading("codex", status: .error("ChatGPT returned 500"))) == .toggleDetail)
+    #expect(HUDIconAction.resolve(for: reading("codex", status: .unknown)) == .toggleDetail)
+    #expect(
+        HUDIconAction.resolve(for: reading("codex", status: .needsAuth, source: UsageReading.pendingSource)) == .toggleDetail,
+        "a placeholder that has not asked the provider yet is not a sign-out"
+    )
+    #expect(
+        HUDIconAction.resolve(for: reading("zcode", status: .needsAuth)) == .toggleDetail,
+        "an API-key provider has no sign-in flow to start"
+    )
+}
+
+@Test
+func signedOutCardOffersSignInOnlyWhenAFlowExists() {
+    #expect(DetailPanelView.signInMethod(for: reading("grok", status: .needsAuth)) != nil)
+    #expect(DetailPanelView.signInMethod(for: reading("grok", status: .live)) == nil)
+    #expect(DetailPanelView.signInMethod(for: reading("zcode", status: .needsAuth)) == nil)
+    #expect(HUDLayout.signInCardHeight <= HUDLayout.defaultMaxCardHeight,
+            "the sign-in card must fit inside the panel reserved for cards")
+}
+
+@MainActor
+@Test
+func terminalSignInRunsTheResolvedLoginCommand() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("NightCrawlerSignInTests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let toolDirectory = root.appendingPathComponent("tool dir with 'quote'", isDirectory: true)
+    try FileManager.default.createDirectory(at: toolDirectory, withIntermediateDirectories: true)
+    let record = root.appendingPathComponent("args.txt")
+    let stub = toolDirectory.appendingPathComponent("codex")
+    try "#!/bin/sh\nprintf '%s\\n' \"$@\" > '\(record.path)'\n".write(to: stub, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+
+    var opened: [URL] = []
+    var launcher = ProviderSignInLauncher()
+    launcher.scriptDirectory = root.appendingPathComponent("scripts", isDirectory: true)
+    launcher.resolveExecutable = { $0 == "codex" ? stub.path : nil }
+    launcher.openFile = { opened.append($0); return true }
+
+    #expect(launcher.launch(.terminal(command: "codex", arguments: ["login"]), providerId: "codex"))
+    let script = try #require(opened.first)
+    #expect(script.pathExtension == "command", "Terminal opens .command files")
+    #expect(FileManager.default.isExecutableFile(atPath: script.path))
+
+    // Run it the way Terminal would, isolated from the user's zsh startup files.
+    let process = Process()
+    process.executableURL = script
+    let zdotdir = root.appendingPathComponent("zdotdir", isDirectory: true)
+    try FileManager.default.createDirectory(at: zdotdir, withIntermediateDirectories: true)
+    process.environment = ["HOME": root.path, "ZDOTDIR": zdotdir.path, "PATH": "/usr/bin:/bin"]
+    let output = Pipe()
+    process.standardOutput = output
+    try process.run()
+    process.waitUntilExit()
+
+    #expect(process.terminationStatus == 0)
+    #expect(try String(contentsOf: record, encoding: .utf8) == "login\n")
+    let printed = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    #expect(printed.contains("Signed in. You can close this window."))
+}
+
+@MainActor
+@Test
+func appSignInOpensTheOwningApp() {
+    var openedBundle: String?
+    var launcher = ProviderSignInLauncher()
+    launcher.openApp = { openedBundle = $0; return true }
+    launcher.openFile = { _ in Issue.record("an app sign-in must not open Terminal"); return false }
+
+    #expect(launcher.launch(.app(bundleIdentifier: "com.google.antigravity", name: "Antigravity"), providerId: "antigravity"))
+    #expect(openedBundle == "com.google.antigravity")
+}
+
+private final class SignInSequenceProvider: UsageProvider, @unchecked Sendable {
+    let id = "codex"
+    let label = "Codex CLI"
+    private let lock = NSLock()
+    private var signedOutReadsLeft: Int
+    private(set) var reads = 0
+
+    init(signedOutReads: Int) { signedOutReadsLeft = signedOutReads }
+
+    var isAvailable: Bool { true }
+
+    var readCount: Int { lock.withLock { reads } }
+
+    func read() async -> UsageReading {
+        let signedOut: Bool = lock.withLock {
+            reads += 1
+            guard signedOutReadsLeft > 0 else { return false }
+            signedOutReadsLeft -= 1
+            return true
+        }
+        if signedOut { return reading(id, status: .needsAuth) }
+        return UsageReading(
+            providerId: id, label: label, accountId: "acct", authMode: "subscription",
+            source: "codex_cli_usage",
+            windows: [UsageWindow(id: "primary", label: "Weekly limit", used: 1900, limit: 10000,
+                                  usedPercent: 19, windowMinutes: 10080, resetsAt: nil)],
+            status: .live, observedAt: Date(), error: nil
+        )
+    }
+}
+
+@MainActor
+@Test
+func signInWatchRestoresTheRingOnceTheToolSavesCredentials() async throws {
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let provider = SignInSequenceProvider(signedOutReads: 2)
+    let store = UsageStore(providers: [provider], defaults: defaults)
+
+    store.watchSignIn(providerId: "codex", interval: .milliseconds(10), attempts: 20)
+
+    let deadline = Date().addingTimeInterval(5)
+    while store.readings.first(where: { $0.providerId == "codex" })?.status != .live, Date() < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(store.readings.first { $0.providerId == "codex" }?.status == .live)
+
+    let readsWhenLive = provider.readCount
+    try await Task.sleep(for: .milliseconds(150))
+    #expect(provider.readCount == readsWhenLive, "the watch stops once the provider is signed in")
+}
+
+@MainActor
+@Test
+func signInWatchGivesUpAfterItsAttempts() async throws {
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let provider = SignInSequenceProvider(signedOutReads: .max)
+    let store = UsageStore(providers: [provider], defaults: defaults)
+
+    store.watchSignIn(providerId: "codex", interval: .milliseconds(5), attempts: 3)
+    let deadline = Date().addingTimeInterval(5)
+    while provider.readCount < 3, Date() < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    try await Task.sleep(for: .milliseconds(150))
+
+    #expect(provider.readCount == 3, "the watch stops after its attempts")
+    #expect(store.readings.first { $0.providerId == "codex" }?.isSignedOut == true)
+}

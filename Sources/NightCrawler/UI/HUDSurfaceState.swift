@@ -34,3 +34,17 @@ struct HUDSurfaceState: Equatable {
 
     mutating func preserveAcrossRefresh() {}
 }
+
+/// What a click on a rail icon does. A signed-out provider with a known
+/// sign-in flow starts it; everything else toggles the detail card.
+enum HUDIconAction: Equatable {
+    case signIn(ProviderSignIn)
+    case toggleDetail
+
+    static func resolve(for reading: UsageReading) -> HUDIconAction {
+        if reading.isSignedOut, let method = ProviderSignIn.method(for: reading.providerId) {
+            return .signIn(method)
+        }
+        return .toggleDetail
+    }
+}
