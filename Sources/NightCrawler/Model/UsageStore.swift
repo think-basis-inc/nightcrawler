@@ -369,12 +369,15 @@ final class UsageStore: ObservableObject {
                previous.status == .live,
                !previous.windows.isEmpty {
                 let remainsLive = previous.isFreshlyObserved()
+                // A denied keychain prompt must stay recognizable behind the
+                // retained windows, or it would read as a sign-out.
+                let keepsDenial = !remainsLive && reading.source == UsageReading.keychainDeniedSource
                 readings[index] = UsageReading(
                     providerId: previous.providerId,
                     label: previous.label,
                     accountId: previous.accountId,
                     authMode: previous.authMode,
-                    source: previous.source,
+                    source: keepsDenial ? reading.source : previous.source,
                     windows: previous.windows,
                     status: remainsLive ? .live : reading.status,
                     observedAt: previous.observedAt,

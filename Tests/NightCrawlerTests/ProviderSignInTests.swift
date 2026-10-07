@@ -261,3 +261,36 @@ func keychainDenialIsToldApartFromAMissingItem() {
     #expect(Keychain.isDenial(errSecInteractionNotAllowed))
     #expect(!Keychain.isDenial(errSecItemNotFound))
 }
+
+@MainActor
+@Test
+func aDeniedKeychainPromptBehindStaleCachedUsageStillAsksForARetry() async throws {
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let provider = SignInSequenceProvider(
+        id: "antigravity", signedOutReads: .max, signedOutSource: UsageReading.keychainDeniedSource
+    )
+    let store = UsageStore(providers: [provider], defaults: defaults)
+    let staleAt = Date().addingTimeInterval(-3600)
+    store.readings = [UsageReading(
+        providerId: "antigravity", label: "Antigravity", accountId: nil, authMode: "subscription",
+        source: "last_good_cache",
+        windows: [UsageWindow(id: "daily", label: "Daily", used: 40, limit: 100,
+                              usedPercent: 40, windowMinutes: 1440, resetsAt: nil)],
+        status: .live, observedAt: staleAt, error: nil
+    )]
+
+    store.watchSignIn(providerId: "antigravity", interval: .milliseconds(5), attempts: 10)
+    let deadline = Date().addingTimeInterval(20)
+    while provider.readCount < 1, Date() < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    try await Task.sleep(for: .milliseconds(150))
+
+    let stored = try #require(store.readings.first { $0.providerId == "antigravity" })
+    #expect(stored.status == .needsAuth)
+    #expect(HUDIconAction.resolve(for: stored, isInstalled: { _ in true }) == .toggleDetail,
+            "a click must retry the keychain, not open Antigravity")
+    #expect(provider.readCount == 1, "the watch must not raise the denied prompt again")
+}
