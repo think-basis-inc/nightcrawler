@@ -216,6 +216,7 @@ func antigravitySignInThatTakesAWhileStillRestoresTheRing() async throws {
     defer { defaults.removePersistentDomain(forName: suiteName) }
     let provider = SignInSequenceProvider(id: "antigravity", signedOutReads: 3)
     let store = UsageStore(providers: [provider], defaults: defaults)
+    store.enabledProviderIds.insert("antigravity")
 
     store.watchSignIn(providerId: "antigravity", interval: .milliseconds(5), attempts: 10)
     let deadline = Date().addingTimeInterval(20)
@@ -236,6 +237,7 @@ func signInWatchDoesNotRepeatADeniedKeychainPrompt() async throws {
         id: "antigravity", signedOutReads: .max, signedOutSource: UsageReading.keychainDeniedSource
     )
     let store = UsageStore(providers: [provider], defaults: defaults)
+    store.enabledProviderIds.insert("antigravity")
 
     store.watchSignIn(providerId: "antigravity", interval: .milliseconds(5), attempts: 10)
     let deadline = Date().addingTimeInterval(20)
@@ -255,11 +257,12 @@ func aDeniedKeychainPromptAsksForARetryNotALogin() {
 }
 
 @Test
-func keychainDenialIsToldApartFromAMissingItem() {
-    #expect(Keychain.isDenial(errSecUserCanceled))
-    #expect(Keychain.isDenial(errSecAuthFailed))
-    #expect(Keychain.isDenial(errSecInteractionNotAllowed))
-    #expect(!Keychain.isDenial(errSecItemNotFound))
+func keychainDenialIsToldApartFromAMissingOrLockedItem() {
+    #expect(Keychain.outcome(for: errSecUserCanceled) == .denied)
+    #expect(Keychain.outcome(for: errSecAuthFailed) == .denied)
+    #expect(Keychain.outcome(for: errSecInteractionNotAllowed) == .unavailable,
+            "a locked keychain is temporary and must keep being polled")
+    #expect(Keychain.outcome(for: errSecItemNotFound) == .missing)
 }
 
 @MainActor
@@ -272,6 +275,7 @@ func aDeniedKeychainPromptBehindStaleCachedUsageStillAsksForARetry() async throw
         id: "antigravity", signedOutReads: .max, signedOutSource: UsageReading.keychainDeniedSource
     )
     let store = UsageStore(providers: [provider], defaults: defaults)
+    store.enabledProviderIds.insert("antigravity")
     let staleAt = Date().addingTimeInterval(-3600)
     store.readings = [UsageReading(
         providerId: "antigravity", label: "Antigravity", accountId: nil, authMode: "subscription",
@@ -293,4 +297,106 @@ func aDeniedKeychainPromptBehindStaleCachedUsageStillAsksForARetry() async throw
     #expect(HUDIconAction.resolve(for: stored, isInstalled: { _ in true }) == .toggleDetail,
             "a click must retry the keychain, not open Antigravity")
     #expect(provider.readCount == 1, "the watch must not raise the denied prompt again")
+}
+
+private final class ScriptedProvider: UsageProvider, @unchecked Sendable {
+    let id: String
+    let label = "Scripted"
+    private let lock = NSLock()
+    private var script: [UsageReading.ReadingStatus]
+    private var reads = 0
+
+    init(id: String, script: [UsageReading.ReadingStatus]) {
+        self.id = id
+        self.script = script
+    }
+
+    var isAvailable: Bool { true }
+    var readCount: Int { lock.withLock { reads } }
+
+    func read() async -> UsageReading {
+        let status: UsageReading.ReadingStatus = lock.withLock {
+            reads += 1
+            return script.count > 1 ? script.removeFirst() : script[0]
+        }
+        guard status == .live else { return reading(id, status: status) }
+        return UsageReading(
+            providerId: id, label: label, accountId: "acct", authMode: "subscription", source: "scripted",
+            windows: [UsageWindow(id: "primary", label: "Weekly limit", used: 10, limit: 100,
+                                  usedPercent: 10, windowMinutes: 10080, resetsAt: nil)],
+            status: .live, observedAt: Date(), error: nil
+        )
+    }
+}
+
+@MainActor
+@Test
+func aTransientErrorDuringSignInDoesNotEndTheWatch() async throws {
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let provider = ScriptedProvider(id: "codex", script: [.needsAuth, .error("request timed out"), .live])
+    let store = UsageStore(providers: [provider], defaults: defaults)
+
+    store.watchSignIn(providerId: "codex", interval: .milliseconds(5), attempts: 10)
+    let deadline = Date().addingTimeInterval(20)
+    while store.readings.first(where: { $0.providerId == "codex" })?.status != .live, Date() < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+
+    #expect(store.readings.first { $0.providerId == "codex" }?.status == .live)
+}
+
+@MainActor
+@Test
+func switchingAProviderOffEndsItsSignInWatch() async throws {
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let provider = ScriptedProvider(id: "codex", script: [.needsAuth])
+    let store = UsageStore(providers: [provider], defaults: defaults)
+    store.enabledProviderIds = ["codex"]
+
+    store.watchSignIn(providerId: "codex", interval: .milliseconds(5), attempts: 50)
+    let deadline = Date().addingTimeInterval(20)
+    while provider.readCount < 1, Date() < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    store.toggle(providerId: "codex")
+    let readsWhenDisabled = provider.readCount
+    try await Task.sleep(for: .milliseconds(200))
+
+    #expect(provider.readCount <= readsWhenDisabled + 1, "at most the read already in flight completes")
+    #expect(store.readings.first { $0.providerId == "codex" } == nil,
+            "a switched-off provider's reading must not come back")
+}
+
+@MainActor
+@Test
+func pollingDoesNotRepeatADeniedKeychainPromptBehindCachedUsage() async throws {
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let denial = SignInSequenceProvider(
+        id: "antigravity", signedOutReads: .max, signedOutSource: UsageReading.keychainDeniedSource
+    )
+    let store = UsageStore(providers: [denial], defaults: defaults)
+    store.enabledProviderIds = ["antigravity"]
+    store.readings = [UsageReading(
+        providerId: "antigravity", label: "Antigravity", accountId: nil, authMode: "subscription",
+        source: "last_good_cache",
+        windows: [UsageWindow(id: "daily", label: "Daily", used: 40, limit: 100,
+                              usedPercent: 40, windowMinutes: 1440, resetsAt: nil)],
+        status: .live, observedAt: Date().addingTimeInterval(-3600), error: nil
+    )]
+
+    store.startPolling(interval: 0.05)
+    defer { store.stopPolling() }
+    let deadline = Date().addingTimeInterval(20)
+    while denial.readCount < 1, Date() < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    try await Task.sleep(for: .milliseconds(400))
+
+    #expect(denial.readCount == 1, "a denied prompt must not be raised again by the next polls")
 }

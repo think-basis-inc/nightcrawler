@@ -35,6 +35,8 @@ enum Keychain {
         /// The user denied or dismissed the access prompt; asking again
         /// raises the same system dialog.
         case denied
+        /// The keychain is locked or cannot prompt right now; retry later.
+        case unavailable
     }
 
     static func lookupPasswordData(service: String, account: String) -> Lookup {
@@ -48,10 +50,14 @@ enum Keychain {
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecSuccess, let data = result as? Data { return .found(data) }
-        return isDenial(status) ? .denied : .missing
+        return outcome(for: status)
     }
 
-    static func isDenial(_ status: OSStatus) -> Bool {
-        status == errSecAuthFailed || status == errSecUserCanceled || status == errSecInteractionNotAllowed
+    static func outcome(for status: OSStatus) -> Lookup {
+        switch status {
+        case errSecAuthFailed, errSecUserCanceled: return .denied
+        case errSecInteractionNotAllowed: return .unavailable
+        default: return .missing
+        }
     }
 }

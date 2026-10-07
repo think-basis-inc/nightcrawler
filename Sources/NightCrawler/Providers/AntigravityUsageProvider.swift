@@ -38,6 +38,8 @@ struct AntigravityUsageProvider: UsageProvider {
                 observedAt: nil,
                 error: "Keychain access was denied; select to retry"
             )
+        case .unavailable:
+            return makeReading(status: .error("Keychain is locked; will retry"))
         case .missing:
             return makeReading(status: .needsAuth, error: "Sign in to Antigravity to enable usage reading")
         }
@@ -165,12 +167,15 @@ struct AntigravityUsageProvider: UsageProvider {
         case found(Credentials)
         case missing
         case denied
+        case unavailable
     }
 
     private func loadCredentials() -> CredentialLookup {
         switch Keychain.lookupPasswordData(service: Self.keychainService, account: Self.keychainAccount) {
         case .denied:
             return .denied
+        case .unavailable:
+            return .unavailable
         case .missing:
             return .missing
         case .found(let data):
