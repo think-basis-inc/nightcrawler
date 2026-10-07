@@ -36,7 +36,7 @@ func clickingASignedOutIconStartsThatToolsOwnLogin() {
         "antigravity": .app(bundleIdentifier: "com.google.antigravity", name: "Antigravity"),
     ]
     for (providerId, method) in expected {
-        #expect(HUDIconAction.resolve(for: reading(providerId, status: .needsAuth)) == .signIn(method),
+        #expect(HUDIconAction.resolve(for: reading(providerId, status: .needsAuth), isInstalled: { _ in true }) == .signIn(method),
                 "\(providerId) should start its own sign-in")
     }
 }
@@ -57,10 +57,19 @@ func iconsThatAreNotSignedOutKeepOpeningTheirCard() {
 }
 
 @Test
+func aToolThatIsNotInstalledIsNotOfferedASignIn() {
+    // Copilot and Cubic report needsAuth when their CLI is missing; a login
+    // command that cannot run must not replace the card.
+    #expect(HUDIconAction.resolve(for: reading("copilot", status: .needsAuth), isInstalled: { _ in false }) == .toggleDetail)
+    #expect(DetailPanelView.signInMethod(for: reading("cubic", status: .needsAuth), isInstalled: { _ in false }) == nil)
+}
+
+@Test
 func signedOutCardOffersSignInOnlyWhenAFlowExists() {
-    #expect(DetailPanelView.signInMethod(for: reading("grok", status: .needsAuth)) != nil)
-    #expect(DetailPanelView.signInMethod(for: reading("grok", status: .live)) == nil)
-    #expect(DetailPanelView.signInMethod(for: reading("zcode", status: .needsAuth)) == nil)
+    let installed: @Sendable (ProviderSignIn) -> Bool = { _ in true }
+    #expect(DetailPanelView.signInMethod(for: reading("grok", status: .needsAuth), isInstalled: installed) != nil)
+    #expect(DetailPanelView.signInMethod(for: reading("grok", status: .live), isInstalled: installed) == nil)
+    #expect(DetailPanelView.signInMethod(for: reading("zcode", status: .needsAuth), isInstalled: installed) == nil)
     #expect(HUDLayout.signInCardHeight <= HUDLayout.defaultMaxCardHeight,
             "the sign-in card must fit inside the panel reserved for cards")
 }
@@ -119,13 +128,16 @@ func appSignInOpensTheOwningApp() {
 }
 
 private final class SignInSequenceProvider: UsageProvider, @unchecked Sendable {
-    let id = "codex"
+    let id: String
     let label = "Codex CLI"
     private let lock = NSLock()
     private var signedOutReadsLeft: Int
-    private(set) var reads = 0
+    private var reads = 0
 
-    init(signedOutReads: Int) { signedOutReadsLeft = signedOutReads }
+    init(id: String = "codex", signedOutReads: Int) {
+        self.id = id
+        signedOutReadsLeft = signedOutReads
+    }
 
     var isAvailable: Bool { true }
 
@@ -189,4 +201,25 @@ func signInWatchGivesUpAfterItsAttempts() async throws {
 
     #expect(provider.readCount == 3, "the watch stops after its attempts")
     #expect(store.readings.first { $0.providerId == "codex" }?.isSignedOut == true)
+}
+
+@MainActor
+@Test
+func signInWatchStopsOnceKeychainAccessIsDenied() async throws {
+    // Antigravity's credentials live in the Keychain: a signed-out read there
+    // can be a denied prompt, which must not be raised again every 5 seconds.
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let provider = SignInSequenceProvider(id: "antigravity", signedOutReads: .max)
+    let store = UsageStore(providers: [provider], defaults: defaults)
+
+    store.watchSignIn(providerId: "antigravity", interval: .milliseconds(5), attempts: 10)
+    let deadline = Date().addingTimeInterval(5)
+    while provider.readCount < 1, Date() < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    try await Task.sleep(for: .milliseconds(150))
+
+    #expect(provider.readCount == 1)
 }

@@ -345,3 +345,44 @@ func claudeOAuthFailureMustNotResurrectADayOldCacheAsLive() async throws {
     #expect(reading.status != .live, "a 16-hour-old Claude cache must not be shown as current after OAuth fails")
     #expect(reading.windows.contains { $0.id == "session" && $0.usedPercent == 2 } == false)
 }
+
+@Test
+func claudeRejectingTheStoredTokenIsASignOut() async {
+    let credentials = ClaudeCredentialStore(
+        fileURL: URL(fileURLWithPath: "/fixture/credentials.json"),
+        reader: { _ in credentialJSON() }
+    )
+    let rejected = HTTPURLResponse(
+        url: URL(string: "https://api.anthropic.com/api/oauth/usage")!,
+        statusCode: 401,
+        httpVersion: "HTTP/1.1",
+        headerFields: nil
+    )!
+    let provider = ClaudeCodeUsageProvider(
+        credentials: credentials,
+        localUsage: emptyLocalUsageCache(),
+        sessionDataLoader: { _ in (Data(), rejected) },
+        cliWindowsReader: { [] }
+    )
+
+    #expect(await provider.read().isSignedOut)
+}
+
+@Test
+func claudeUsageThatCannotBeReadYetIsNotASignOut() async {
+    // Claude Code keeps its token in the Keychain on macOS, so a missing
+    // credentials file plus an empty CLI read says nothing about sign-in.
+    let provider = ClaudeCodeUsageProvider(
+        credentials: ClaudeCredentialStore(
+            fileURL: URL(fileURLWithPath: "/fixture/missing.json"),
+            reader: { _ in nil }
+        ),
+        localUsage: emptyLocalUsageCache(),
+        sessionDataLoader: { _ in throw URLError(.notConnectedToInternet) },
+        cliWindowsReader: { [] }
+    )
+
+    let reading = await provider.read()
+    #expect(!reading.isSignedOut)
+    #expect(reading.status.isError)
+}

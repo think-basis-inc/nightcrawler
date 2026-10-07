@@ -181,10 +181,7 @@ struct HUDRootView: View {
         let height: CGFloat = {
             switch content {
             case .detail(let reading):
-                if DetailPanelView.signInMethod(for: reading) != nil {
-                    return HUDLayout.signInCardHeight
-                }
-                return HUDLayout.cardHeight(windowCount: max(reading.windows.count, 1))
+                return DetailPanelView.cardHeight(for: reading)
             case .settings:
                 return HUDLayout.settingsCardHeight(
                     providerCount: store.providerCatalog.count,

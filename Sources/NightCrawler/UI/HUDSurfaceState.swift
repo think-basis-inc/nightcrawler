@@ -41,8 +41,13 @@ enum HUDIconAction: Equatable {
     case signIn(ProviderSignIn)
     case toggleDetail
 
-    static func resolve(for reading: UsageReading) -> HUDIconAction {
-        if reading.isSignedOut, let method = ProviderSignIn.method(for: reading.providerId) {
+    static func resolve(
+        for reading: UsageReading,
+        isInstalled: (ProviderSignIn) -> Bool = ProviderSignIn.isInstalled
+    ) -> HUDIconAction {
+        if reading.isSignedOut,
+           let method = ProviderSignIn.method(for: reading.providerId),
+           isInstalled(method) {
             return .signIn(method)
         }
         return .toggleDetail

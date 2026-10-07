@@ -5,8 +5,20 @@ struct DetailPanelView: View {
     var onSignIn: () -> Void = {}
     let onClose: () -> Void
 
-    static func signInMethod(for reading: UsageReading) -> ProviderSignIn? {
-        reading.isSignedOut ? ProviderSignIn.method(for: reading.providerId) : nil
+    static func signInMethod(
+        for reading: UsageReading,
+        isInstalled: (ProviderSignIn) -> Bool = ProviderSignIn.isInstalled
+    ) -> ProviderSignIn? {
+        if case .signIn(let method) = HUDIconAction.resolve(for: reading, isInstalled: isInstalled) {
+            return method
+        }
+        return nil
+    }
+
+    static func cardHeight(for reading: UsageReading) -> CGFloat {
+        signInMethod(for: reading) != nil
+            ? HUDLayout.signInCardHeight
+            : HUDLayout.cardHeight(windowCount: max(reading.windows.count, 1))
     }
 
     var body: some View {

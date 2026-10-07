@@ -25,6 +25,17 @@ enum ProviderSignIn: Equatable, Sendable {
         }
     }
 
+    /// A missing CLI or app cannot sign anyone in; its provider keeps the
+    /// ordinary card instead of a sign-in that would fail.
+    static func isInstalled(_ method: ProviderSignIn) -> Bool {
+        switch method {
+        case .terminal(let command, _):
+            return RestrictedProcess.resolveOnPath(command) != nil
+        case .app(let bundleIdentifier, _):
+            return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) != nil
+        }
+    }
+
     /// One line telling the user where the sign-in will happen.
     var hint: String {
         switch self {

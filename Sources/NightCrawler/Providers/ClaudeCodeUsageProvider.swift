@@ -60,7 +60,7 @@ struct ClaudeCodeUsageProvider: UsageProvider {
                 return makeReading(status: .error("Bad response"))
             }
             if http.statusCode == 401 || http.statusCode == 403 {
-                return await readFromCLI()
+                return await readFromCLI(oauthRejected: true)
             }
             if http.statusCode == 429 {
                 if let cached = readingFromLocalCache(), Self.isFresh(cached) { return cached }
@@ -125,13 +125,18 @@ struct ClaudeCodeUsageProvider: UsageProvider {
         )
     }
 
-    private func readFromCLI() async -> UsageReading {
+    /// `oauthRejected` means Anthropic refused the stored token, which is a
+    /// real sign-out. Without that, an empty CLI read only means the usage
+    /// could not be read yet; offering a login there would be wrong.
+    private func readFromCLI(oauthRejected: Bool = false) async -> UsageReading {
         let windows = await readCLIWindows()
         guard !windows.isEmpty else {
             if let cached = readingFromLocalCache(), Self.isFresh(cached) { return cached }
+            if oauthRejected {
+                return makeReading(status: .needsAuth, error: "Claude sign-in expired; run claude auth login")
+            }
             return makeReading(
-                status: .needsAuth,
-                error: "Open Claude Code once so NightCrawler can read subscription usage"
+                status: .error("Open Claude Code once so NightCrawler can read subscription usage")
             )
         }
         return UsageReading(

@@ -145,6 +145,8 @@ final class FloatingHUDController: ObservableObject {
 
     private func handleIconClick(_ reading: UsageReading) {
         switch HUDIconAction.resolve(for: reading) {
+        case .signIn where surface.selectedProviderId == reading.providerId:
+            toggleDetail(for: reading)
         case .signIn(let method):
             signIn(reading, using: method)
         case .toggleDetail:
@@ -220,7 +222,7 @@ final class FloatingHUDController: ObservableObject {
                 self?.handleIconClick(reading)
             },
             onSignIn: { [weak self] reading in
-                guard let method = ProviderSignIn.method(for: reading.providerId) else { return }
+                guard let method = DetailPanelView.signInMethod(for: reading) else { return }
                 self?.signIn(reading, using: method)
             },
             onSettings: { [weak self] in
@@ -324,12 +326,10 @@ final class FloatingHUDController: ObservableObject {
         case .idle:
             return baseDepth
         case .detail(let id):
-            let windowCount = store.orderedReadings
-                .first(where: { $0.providerId == id })?
-                .windows.count ?? 1
+            let reading = store.orderedReadings.first(where: { $0.providerId == id })
             let cardDepth = edge.isVertical
                 ? HUDLayout.cardWidth
-                : HUDLayout.cardHeight(windowCount: max(windowCount, 1))
+                : reading.map(DetailPanelView.cardHeight(for:)) ?? HUDLayout.cardHeight(windowCount: 1)
             return baseDepth + HUDLayout.tailLength + cardDepth
         case .settings:
             let cardDepth = edge.isVertical

@@ -29,7 +29,7 @@ final class UsageStore: ObservableObject {
     private var demoReadings: [UsageReading]?
     private var deniedProviderIds: Set<String> = []
     private var keychainProviderIds: Set<String> = ["antigravity"]
-    private var signInWatches: [String: Task<Void, Never>] = [:]
+    private var signInWatches: [String: (token: UUID, task: Task<Void, Never>)] = [:]
 
     private static let enabledDefaultsKey = "enabledProviderIds"
     private static let claudeDefaultEnabledMigrationKey = "migratedDefaultEnabledClaude"
@@ -183,23 +183,29 @@ final class UsageStore: ObservableObject {
     /// Re-reads a provider while the user finishes signing in elsewhere, so the
     /// ring returns as soon as the tool saves its credentials instead of on
     /// the next minute-long poll. Stops at the first reading that is no longer
-    /// signed out, or after `attempts`.
+    /// signed out, after `attempts`, or once a keychain read is denied so the
+    /// system prompt is not raised again every few seconds.
     func watchSignIn(
         providerId: String,
         interval: Duration = .seconds(5),
         attempts: Int = 60
     ) {
-        signInWatches[providerId]?.cancel()
-        signInWatches[providerId] = Task { [weak self] in
+        signInWatches[providerId]?.task.cancel()
+        let token = UUID()
+        let task = Task { [weak self] in
             for _ in 0..<attempts {
                 try? await Task.sleep(for: interval)
                 guard !Task.isCancelled, let self else { return }
                 await self.refresh(providerId: providerId)
+                guard !Task.isCancelled else { return }
                 let reading = self.readings.first { $0.providerId == providerId }
-                if reading?.isSignedOut != true { break }
+                if reading?.isSignedOut != true || self.deniedProviderIds.contains(providerId) { break }
             }
-            self?.signInWatches[providerId] = nil
+            if self?.signInWatches[providerId]?.token == token {
+                self?.signInWatches[providerId] = nil
+            }
         }
+        signInWatches[providerId] = (token, task)
     }
 
     func toggle(providerId: String) {
