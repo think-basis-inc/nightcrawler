@@ -72,12 +72,16 @@ struct UsageReading: Identifiable, Equatable, Sendable {
     }
 
     /// The provider answered that its sign-in is missing or expired. A pending
-    /// placeholder has not asked the provider yet, so it is not signed out.
+    /// placeholder has not asked the provider yet, and a denied keychain prompt
+    /// needs a retry rather than a new login, so neither is signed out.
     var isSignedOut: Bool {
-        status == .needsAuth && source != UsageReading.pendingSource
+        status == .needsAuth
+            && source != UsageReading.pendingSource
+            && source != UsageReading.keychainDeniedSource
     }
 
     static let pendingSource = "pending"
+    static let keychainDeniedSource = "keychain_denied"
 
     func isFreshlyObserved(now: Date = Date()) -> Bool {
         guard status == .live, !windows.isEmpty else { return false }

@@ -17,11 +17,28 @@ struct AntigravityUsageProvider: UsageProvider {
     private static let quotaEndpoint = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")!
 
     var isAvailable: Bool {
-        loadCredentials() != nil
+        if case .found = loadCredentials() { return true }
+        return false
     }
 
     func read() async -> UsageReading {
-        guard let credentials = loadCredentials() else {
+        let credentials: Credentials
+        switch loadCredentials() {
+        case .found(let found):
+            credentials = found
+        case .denied:
+            return UsageReading(
+                providerId: id,
+                label: label,
+                accountId: nil,
+                authMode: "unknown",
+                source: UsageReading.keychainDeniedSource,
+                windows: [],
+                status: .needsAuth,
+                observedAt: nil,
+                error: "Keychain access was denied; select to retry"
+            )
+        case .missing:
             return makeReading(status: .needsAuth, error: "Sign in to Antigravity to enable usage reading")
         }
         guard !credentials.isExpired else {
@@ -144,11 +161,21 @@ struct AntigravityUsageProvider: UsageProvider {
         }
     }
 
-    private func loadCredentials() -> Credentials? {
-        guard let data = Keychain.readPasswordData(service: Self.keychainService, account: Self.keychainAccount),
-              let decoded = decode(data)
-        else { return nil }
-        return decoded
+    private enum CredentialLookup {
+        case found(Credentials)
+        case missing
+        case denied
+    }
+
+    private func loadCredentials() -> CredentialLookup {
+        switch Keychain.lookupPasswordData(service: Self.keychainService, account: Self.keychainAccount) {
+        case .denied:
+            return .denied
+        case .missing:
+            return .missing
+        case .found(let data):
+            return decode(data).map(CredentialLookup.found) ?? .missing
+        }
     }
 
     private func decode(_ data: Data) -> Credentials? {

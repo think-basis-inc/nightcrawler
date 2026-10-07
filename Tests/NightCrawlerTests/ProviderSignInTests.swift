@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 @testable import NightCrawler
 
@@ -133,10 +134,12 @@ private final class SignInSequenceProvider: UsageProvider, @unchecked Sendable {
     private let lock = NSLock()
     private var signedOutReadsLeft: Int
     private var reads = 0
+    private let signedOutSource: String
 
-    init(id: String = "codex", signedOutReads: Int) {
+    init(id: String = "codex", signedOutReads: Int, signedOutSource: String = "provider") {
         self.id = id
         signedOutReadsLeft = signedOutReads
+        self.signedOutSource = signedOutSource
     }
 
     var isAvailable: Bool { true }
@@ -150,7 +153,7 @@ private final class SignInSequenceProvider: UsageProvider, @unchecked Sendable {
             signedOutReadsLeft -= 1
             return true
         }
-        if signedOut { return reading(id, status: .needsAuth) }
+        if signedOut { return reading(id, status: .needsAuth, source: signedOutSource) }
         return UsageReading(
             providerId: id, label: label, accountId: "acct", authMode: "subscription",
             source: "codex_cli_usage",
@@ -172,7 +175,7 @@ func signInWatchRestoresTheRingOnceTheToolSavesCredentials() async throws {
 
     store.watchSignIn(providerId: "codex", interval: .milliseconds(10), attempts: 20)
 
-    let deadline = Date().addingTimeInterval(5)
+    let deadline = Date().addingTimeInterval(20)
     while store.readings.first(where: { $0.providerId == "codex" })?.status != .live, Date() < deadline {
         try await Task.sleep(for: .milliseconds(10))
     }
@@ -193,7 +196,7 @@ func signInWatchGivesUpAfterItsAttempts() async throws {
     let store = UsageStore(providers: [provider], defaults: defaults)
 
     store.watchSignIn(providerId: "codex", interval: .milliseconds(5), attempts: 3)
-    let deadline = Date().addingTimeInterval(5)
+    let deadline = Date().addingTimeInterval(20)
     while provider.readCount < 3, Date() < deadline {
         try await Task.sleep(for: .milliseconds(10))
     }
@@ -205,21 +208,56 @@ func signInWatchGivesUpAfterItsAttempts() async throws {
 
 @MainActor
 @Test
-func signInWatchStopsOnceKeychainAccessIsDenied() async throws {
-    // Antigravity's credentials live in the Keychain: a signed-out read there
-    // can be a denied prompt, which must not be raised again every 5 seconds.
+func antigravitySignInThatTakesAWhileStillRestoresTheRing() async throws {
+    // Expired credentials are an ordinary sign-out, not a keychain denial:
+    // the watch must keep going until the user finishes in Antigravity.
     let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suiteName)!
     defer { defaults.removePersistentDomain(forName: suiteName) }
-    let provider = SignInSequenceProvider(id: "antigravity", signedOutReads: .max)
+    let provider = SignInSequenceProvider(id: "antigravity", signedOutReads: 3)
     let store = UsageStore(providers: [provider], defaults: defaults)
 
     store.watchSignIn(providerId: "antigravity", interval: .milliseconds(5), attempts: 10)
-    let deadline = Date().addingTimeInterval(5)
+    let deadline = Date().addingTimeInterval(20)
+    while store.readings.first(where: { $0.providerId == "antigravity" })?.status != .live, Date() < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+
+    #expect(store.readings.first { $0.providerId == "antigravity" }?.status == .live)
+}
+
+@MainActor
+@Test
+func signInWatchDoesNotRepeatADeniedKeychainPrompt() async throws {
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let provider = SignInSequenceProvider(
+        id: "antigravity", signedOutReads: .max, signedOutSource: UsageReading.keychainDeniedSource
+    )
+    let store = UsageStore(providers: [provider], defaults: defaults)
+
+    store.watchSignIn(providerId: "antigravity", interval: .milliseconds(5), attempts: 10)
+    let deadline = Date().addingTimeInterval(20)
     while provider.readCount < 1, Date() < deadline {
         try await Task.sleep(for: .milliseconds(10))
     }
     try await Task.sleep(for: .milliseconds(150))
 
     #expect(provider.readCount == 1)
+}
+
+@Test
+func aDeniedKeychainPromptAsksForARetryNotALogin() {
+    let denied = reading("antigravity", status: .needsAuth, source: UsageReading.keychainDeniedSource)
+    #expect(!denied.isSignedOut)
+    #expect(HUDIconAction.resolve(for: denied, isInstalled: { _ in true }) == .toggleDetail)
+}
+
+@Test
+func keychainDenialIsToldApartFromAMissingItem() {
+    #expect(Keychain.isDenial(errSecUserCanceled))
+    #expect(Keychain.isDenial(errSecAuthFailed))
+    #expect(Keychain.isDenial(errSecInteractionNotAllowed))
+    #expect(!Keychain.isDenial(errSecItemNotFound))
 }

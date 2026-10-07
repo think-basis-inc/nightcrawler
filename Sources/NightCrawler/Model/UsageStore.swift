@@ -175,7 +175,7 @@ final class UsageStore: ObservableObject {
         let reading = await Self.readWithBudget(provider, budget: providerReadBudget)
         guard providerId != "cubic" || cubicSource == cubicUsageRepository else { return }
         updateReading(reading)
-        if case .needsAuth = reading.status, keychainProviderIds.contains(providerId) {
+        if reading.source == UsageReading.keychainDeniedSource, keychainProviderIds.contains(providerId) {
             deniedProviderIds.insert(providerId)
         }
     }
@@ -183,8 +183,8 @@ final class UsageStore: ObservableObject {
     /// Re-reads a provider while the user finishes signing in elsewhere, so the
     /// ring returns as soon as the tool saves its credentials instead of on
     /// the next minute-long poll. Stops at the first reading that is no longer
-    /// signed out, after `attempts`, or once a keychain read is denied so the
-    /// system prompt is not raised again every few seconds.
+    /// signed out or after `attempts`. A denied keychain prompt is not signed
+    /// out, so the watch never raises that system dialog again by itself.
     func watchSignIn(
         providerId: String,
         interval: Duration = .seconds(5),
@@ -199,7 +199,7 @@ final class UsageStore: ObservableObject {
                 await self.refresh(providerId: providerId)
                 guard !Task.isCancelled else { return }
                 let reading = self.readings.first { $0.providerId == providerId }
-                if reading?.isSignedOut != true || self.deniedProviderIds.contains(providerId) { break }
+                if reading?.isSignedOut != true { break }
             }
             if self?.signInWatches[providerId]?.token == token {
                 self?.signInWatches[providerId] = nil
@@ -303,7 +303,7 @@ final class UsageStore: ObservableObject {
             for await reading in group {
                 if reading.providerId == "cubic", cubicSource != cubicUsageRepository { continue }
                 updateReading(reading)
-                if case .needsAuth = reading.status,
+                if reading.source == UsageReading.keychainDeniedSource,
                    keychainProviderIds.contains(reading.providerId),
                    readings.first(where: { $0.providerId == reading.providerId })?.windows.isEmpty != false {
                     deniedProviderIds.insert(reading.providerId)
