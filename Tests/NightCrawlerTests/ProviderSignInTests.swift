@@ -461,3 +461,51 @@ func ordinaryIconClicksKeepTheirExistingRefreshBehavior() {
     #expect(HUDIconAction.shouldRetry(for: failed, opensDetail: true))
     #expect(!HUDIconAction.shouldRetry(for: failed, opensDetail: false))
 }
+
+private final class SourceScriptedProvider: UsageProvider, @unchecked Sendable {
+    let id = "antigravity"
+    let label = "Antigravity"
+    private let lock = NSLock()
+    private var sources: [String]
+
+    init(sources: [String]) { self.sources = sources }
+
+    var isAvailable: Bool { true }
+
+    func read() async -> UsageReading {
+        let source = lock.withLock { sources.count > 1 ? sources.removeFirst() : sources[0] }
+        return reading(id, status: .needsAuth, source: source)
+    }
+}
+
+@MainActor
+@Test(arguments: [60.0, 3600.0])
+func aRetryThatFindsAnExpiredLoginClearsTheDenialLabel(cacheAge: TimeInterval) async throws {
+    let suiteName = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let provider = SourceScriptedProvider(sources: [UsageReading.keychainDeniedSource, "antigravity_usage"])
+    let store = UsageStore(providers: [provider], defaults: defaults)
+    store.enabledProviderIds = ["antigravity"]
+    store.readings = [UsageReading(
+        providerId: "antigravity", label: "Antigravity", accountId: nil, authMode: "subscription",
+        source: "last_good_cache",
+        windows: [UsageWindow(id: "daily", label: "Daily", used: 40, limit: 100,
+                              usedPercent: 40, windowMinutes: 1440, resetsAt: nil)],
+        status: .live, observedAt: Date().addingTimeInterval(-cacheAge), error: nil
+    )]
+
+    await store.poll()
+    #expect(store.readings.first?.source == UsageReading.keychainDeniedSource)
+
+    // The user clicks to retry; this time the keychain answers with expired credentials.
+    await store.refresh(providerId: "antigravity")
+    let retried = try #require(store.readings.first)
+    #expect(retried.source != UsageReading.keychainDeniedSource,
+            "an expired login must not stay hidden behind an earlier denial")
+    if cacheAge > CapacitySnapshot.liveFreshnessInterval {
+        #expect(retried.isSignedOut)
+        #expect(HUDIconAction.resolve(for: retried, isInstalled: { _ in true })
+                == .signIn(.app(bundleIdentifier: "com.google.antigravity", name: "Antigravity")))
+    }
+}

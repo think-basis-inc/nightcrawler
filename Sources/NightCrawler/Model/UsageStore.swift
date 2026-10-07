@@ -379,15 +379,19 @@ final class UsageStore: ObservableObject {
                previous.status == .live,
                !previous.windows.isEmpty {
                 let remainsLive = previous.isFreshlyObserved()
-                // Keep denials recognizable even while cached usage is live,
-                // so an explicit icon click can retry the paused provider.
-                let keepsDenial = reading.source == UsageReading.keychainDeniedSource
+                // The denial label describes only the latest read: keep it
+                // behind cached usage so a click can retry, and drop it as soon
+                // as a later read says something else (such as an expired login).
+                let denied = UsageReading.keychainDeniedSource
+                let source = reading.source == denied || previous.source == denied
+                    ? reading.source
+                    : previous.source
                 readings[index] = UsageReading(
                     providerId: previous.providerId,
                     label: previous.label,
                     accountId: previous.accountId,
                     authMode: previous.authMode,
-                    source: keepsDenial ? reading.source : previous.source,
+                    source: source,
                     windows: previous.windows,
                     status: remainsLive ? .live : reading.status,
                     observedAt: previous.observedAt,
