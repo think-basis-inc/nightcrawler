@@ -122,6 +122,15 @@ enum HUDLayout {
         return height
     }
 
+    /// Signed-out card: two-line status, the Sign in capsule, then its hint.
+    static let signInCardHeight: CGFloat = {
+        let header = max(glyphSize, cardTitleLineHeight)
+        return 2 * cardPadding + header
+            + headerToBlock + 2 * cardBodyLineHeight
+            + blockSpacing + edgePickerHeight
+            + labelToBar + cardBodyLineHeight
+    }()
+
     static func settingsCardHeight(
         providerCount: Int,
         routingToolCount: Int,

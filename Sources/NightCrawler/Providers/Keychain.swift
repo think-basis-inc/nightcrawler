@@ -29,7 +29,17 @@ enum Keychain {
         return result as? Data
     }
 
-    static func readPasswordData(service: String, account: String) -> Data? {
+    enum Lookup: Equatable {
+        case found(Data)
+        case missing
+        /// The user denied or dismissed the access prompt; asking again
+        /// raises the same system dialog.
+        case denied
+        /// The keychain is locked or cannot prompt right now; retry later.
+        case unavailable
+    }
+
+    static func lookupPasswordData(service: String, account: String) -> Lookup {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -39,7 +49,15 @@ enum Keychain {
         ]
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess else { return nil }
-        return result as? Data
+        if status == errSecSuccess, let data = result as? Data { return .found(data) }
+        return outcome(for: status)
+    }
+
+    static func outcome(for status: OSStatus) -> Lookup {
+        switch status {
+        case errSecAuthFailed, errSecUserCanceled: return .denied
+        case errSecInteractionNotAllowed: return .unavailable
+        default: return .missing
+        }
     }
 }

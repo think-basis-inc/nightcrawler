@@ -71,6 +71,18 @@ struct UsageReading: Identifiable, Equatable, Sendable {
         return windows.sorted { rank($0.id) < rank($1.id) }
     }
 
+    /// The provider answered that its sign-in is missing or expired. A pending
+    /// placeholder has not asked the provider yet, and a denied keychain prompt
+    /// needs a retry rather than a new login, so neither is signed out.
+    var isSignedOut: Bool {
+        status == .needsAuth
+            && source != UsageReading.pendingSource
+            && source != UsageReading.keychainDeniedSource
+    }
+
+    static let pendingSource = "pending"
+    static let keychainDeniedSource = "keychain_denied"
+
     func isFreshlyObserved(now: Date = Date()) -> Bool {
         guard status == .live, !windows.isEmpty else { return false }
         if providerId == "cubic" {

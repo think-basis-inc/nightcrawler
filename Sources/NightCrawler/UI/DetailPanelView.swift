@@ -2,7 +2,24 @@ import SwiftUI
 
 struct DetailPanelView: View {
     let reading: UsageReading
+    var onSignIn: () -> Void = {}
     let onClose: () -> Void
+
+    static func signInMethod(
+        for reading: UsageReading,
+        isInstalled: (ProviderSignIn) -> Bool = ProviderSignIn.isInstalled
+    ) -> ProviderSignIn? {
+        if case .signIn(let method) = HUDIconAction.resolve(for: reading, isInstalled: isInstalled) {
+            return method
+        }
+        return nil
+    }
+
+    static func cardHeight(for reading: UsageReading) -> CGFloat {
+        signInMethod(for: reading) != nil
+            ? HUDLayout.signInCardHeight
+            : HUDLayout.cardHeight(windowCount: max(reading.windows.count, 1))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -24,7 +41,31 @@ struct DetailPanelView: View {
                 .accessibilityLabel("Close")
             }
 
-            if reading.status.isError || reading.status == .unknown {
+            if let method = Self.signInMethod(for: reading) {
+                Text(statusMessage)
+                    .font(Typography.cardBody)
+                    .foregroundStyle(Palette.textSecondary)
+                    .lineLimit(2)
+                    .frame(height: 2 * HUDLayout.cardBodyLineHeight, alignment: .topLeading)
+                    .padding(.top, HUDLayout.headerToBlock)
+                Button(action: onSignIn) {
+                    Text("Sign in")
+                        .font(Typography.cardBody)
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, Design.px(20))
+                        .frame(height: HUDLayout.edgePickerHeight)
+                        .background(Capsule().fill(Palette.ample))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, HUDLayout.blockSpacing)
+                .accessibilityLabel("Sign in to \(reading.label)")
+                Text(method.hint)
+                    .font(Typography.cardBody)
+                    .foregroundStyle(Palette.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.top, HUDLayout.labelToBar)
+            } else if reading.status.isError || reading.status == .unknown {
                 Text(statusMessage)
                     .font(Typography.cardBody)
                     .foregroundStyle(Palette.textSecondary)

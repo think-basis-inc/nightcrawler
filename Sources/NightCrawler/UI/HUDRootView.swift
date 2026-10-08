@@ -9,6 +9,7 @@ struct HUDRootView: View {
     var isAutoHideEnabled: Bool = false
     var railFitScale: CGFloat = 1
     var onSelect: (UsageReading) -> Void
+    var onSignIn: (UsageReading) -> Void = { _ in }
     var onSettings: () -> Void
     var onEdgeChange: (NotchEdge) -> Void
     var onMiniModeChange: (Bool) -> Void = { _ in }
@@ -180,7 +181,7 @@ struct HUDRootView: View {
         let height: CGFloat = {
             switch content {
             case .detail(let reading):
-                return HUDLayout.cardHeight(windowCount: max(reading.windows.count, 1))
+                return DetailPanelView.cardHeight(for: reading)
             case .settings:
                 return HUDLayout.settingsCardHeight(
                     providerCount: store.providerCatalog.count,
@@ -207,7 +208,7 @@ struct HUDRootView: View {
         ) {
             switch content {
             case .detail(let reading):
-                DetailPanelView(reading: reading, onClose: onDismiss)
+                DetailPanelView(reading: reading, onSignIn: { onSignIn(reading) }, onClose: onDismiss)
             case .settings:
                 ScrollView(.vertical) {
                     SettingsView(

@@ -29,6 +29,7 @@ final class UsageStore: ObservableObject {
     private var demoReadings: [UsageReading]?
     private var deniedProviderIds: Set<String> = []
     private var keychainProviderIds: Set<String> = ["antigravity"]
+    private var signInWatches: [String: (token: UUID, task: Task<Void, Never>)] = [:]
 
     private static let enabledDefaultsKey = "enabledProviderIds"
     private static let claudeDefaultEnabledMigrationKey = "migratedDefaultEnabledClaude"
@@ -173,10 +174,47 @@ final class UsageStore: ObservableObject {
         let cubicSource = cubicUsageRepository
         let reading = await Self.readWithBudget(provider, budget: providerReadBudget)
         guard providerId != "cubic" || cubicSource == cubicUsageRepository else { return }
+        guard isProviderEnabled(providerId) else { return }
         updateReading(reading)
-        if case .needsAuth = reading.status, keychainProviderIds.contains(providerId) {
+        if reading.source == UsageReading.keychainDeniedSource, keychainProviderIds.contains(providerId) {
             deniedProviderIds.insert(providerId)
         }
+    }
+
+    /// Re-reads a provider while the user finishes signing in elsewhere, so the
+    /// ring returns as soon as the tool saves its credentials instead of on
+    /// the next minute-long poll. Stops at the first reading that is no longer
+    /// signed out or failing transiently, after `attempts`, or when the
+    /// provider is switched off. A denied keychain prompt is neither, so the
+    /// watch never raises that system dialog again by itself.
+    func watchSignIn(
+        providerId: String,
+        interval: Duration = .seconds(5),
+        attempts: Int = 60
+    ) {
+        signInWatches[providerId]?.task.cancel()
+        let token = UUID()
+        let task = Task { [weak self] in
+            for _ in 0..<attempts {
+                try? await Task.sleep(for: interval)
+                guard !Task.isCancelled, let self else { return }
+                guard self.isProviderEnabled(providerId) else { break }
+                await self.refresh(providerId: providerId)
+                guard !Task.isCancelled else { return }
+                guard let reading = self.readings.first(where: { $0.providerId == providerId }) else { break }
+                let stillWaiting: Bool
+                if case .error = reading.status { stillWaiting = true } else { stillWaiting = reading.isSignedOut }
+                if !stillWaiting { break }
+            }
+            if self?.signInWatches[providerId]?.token == token {
+                self?.signInWatches[providerId] = nil
+            }
+        }
+        signInWatches[providerId] = (token, task)
+    }
+
+    private func cancelSignInWatch(_ providerId: String) {
+        signInWatches.removeValue(forKey: providerId)?.task.cancel()
     }
 
     func toggle(providerId: String) {
@@ -186,6 +224,7 @@ final class UsageStore: ObservableObject {
         }
         if enabledProviderIds.contains(providerId) {
             enabledProviderIds.remove(providerId)
+            cancelSignInWatch(providerId)
             readings.removeAll { $0.providerId == providerId }
         } else {
             enabledProviderIds.insert(providerId)
@@ -232,6 +271,7 @@ final class UsageStore: ObservableObject {
                 Task { await refresh(providerId: id) }
             }
         } else {
+            cancelSignInWatch(id)
             readings.removeAll { $0.providerId == id }
         }
     }
@@ -274,9 +314,8 @@ final class UsageStore: ObservableObject {
             for await reading in group {
                 if reading.providerId == "cubic", cubicSource != cubicUsageRepository { continue }
                 updateReading(reading)
-                if case .needsAuth = reading.status,
-                   keychainProviderIds.contains(reading.providerId),
-                   readings.first(where: { $0.providerId == reading.providerId })?.windows.isEmpty != false {
+                if reading.source == UsageReading.keychainDeniedSource,
+                   keychainProviderIds.contains(reading.providerId) {
                     deniedProviderIds.insert(reading.providerId)
                 }
             }
@@ -340,12 +379,19 @@ final class UsageStore: ObservableObject {
                previous.status == .live,
                !previous.windows.isEmpty {
                 let remainsLive = previous.isFreshlyObserved()
+                // The denial label describes only the latest read: keep it
+                // behind cached usage so a click can retry, and drop it as soon
+                // as a later read says something else (such as an expired login).
+                let denied = UsageReading.keychainDeniedSource
+                let source = reading.source == denied || previous.source == denied
+                    ? reading.source
+                    : previous.source
                 readings[index] = UsageReading(
                     providerId: previous.providerId,
                     label: previous.label,
                     accountId: previous.accountId,
                     authMode: previous.authMode,
-                    source: previous.source,
+                    source: source,
                     windows: previous.windows,
                     status: remainsLive ? .live : reading.status,
                     observedAt: previous.observedAt,
@@ -427,7 +473,7 @@ final class UsageStore: ObservableObject {
                         label: provider.label,
                         accountId: nil,
                         authMode: "unknown",
-                        source: "pending",
+                        source: UsageReading.pendingSource,
                         windows: [],
                         status: .needsAuth,
                         observedAt: nil,
