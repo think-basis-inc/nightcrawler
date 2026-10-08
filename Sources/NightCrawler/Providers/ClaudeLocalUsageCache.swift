@@ -31,12 +31,8 @@ struct ClaudeLocalUsageCache: Sendable {
               let utilization = cache["utilization"] as? [String: Any]
         else { return [] }
 
-        let fetchedAt: Date
-        if let millis = number(cache["fetchedAtMs"]) {
-            fetchedAt = Date(timeIntervalSince1970: millis / 1000)
-        } else {
-            fetchedAt = now
-        }
+        guard let millis = number(cache["fetchedAtMs"]) else { return [] }
+        let fetchedAt = Date(timeIntervalSince1970: millis / 1000)
         guard now.timeIntervalSince(fetchedAt) <= maxAge,
               now.timeIntervalSince(fetchedAt) >= -120
         else { return [] }
@@ -47,6 +43,8 @@ struct ClaudeLocalUsageCache: Sendable {
                 guard let kind = limit["kind"] as? String,
                       let percent = number(limit["percent"])
                 else { continue }
+                let resetsAt = resetDate(from: limit)
+                if let resetsAt, resetsAt <= now { continue }
                 collected[kind] = UsageWindow(
                     id: kind,
                     label: ClaudeUsageLabels.label(for: kind),
@@ -54,7 +52,7 @@ struct ClaudeLocalUsageCache: Sendable {
                     limit: 10_000,
                     usedPercent: percent,
                     windowMinutes: windowMinutes(for: kind),
-                    resetsAt: ProviderHelpers.parseISO8601(limit["resets_at"] as? String),
+                    resetsAt: resetsAt,
                     observedAt: fetchedAt
                 )
             }
@@ -65,7 +63,8 @@ struct ClaudeLocalUsageCache: Sendable {
             label: "Current session",
             minutes: 300,
             into: &collected,
-            observedAt: fetchedAt
+            observedAt: fetchedAt,
+            now: now
         )
         merge(
             utilization["seven_day"] as? [String: Any],
@@ -73,7 +72,8 @@ struct ClaudeLocalUsageCache: Sendable {
             label: "All models",
             minutes: 10_080,
             into: &collected,
-            observedAt: fetchedAt
+            observedAt: fetchedAt,
+            now: now
         )
         return collected.values.sorted { rank($0.id) < rank($1.id) }
     }
@@ -84,12 +84,15 @@ struct ClaudeLocalUsageCache: Sendable {
         label: String,
         minutes: Int,
         into collected: inout [String: UsageWindow],
-        observedAt: Date
+        observedAt: Date,
+        now: Date
     ) {
         guard collected[id] == nil,
               let raw,
               let percent = number(raw["utilization"])
         else { return }
+        let resetsAt = resetDate(from: raw)
+        if let resetsAt, resetsAt <= now { return }
         collected[id] = UsageWindow(
             id: id,
             label: label,
@@ -97,9 +100,14 @@ struct ClaudeLocalUsageCache: Sendable {
             limit: 10_000,
             usedPercent: percent,
             windowMinutes: minutes,
-            resetsAt: ProviderHelpers.parseISO8601(raw["resets_at"] as? String),
+            resetsAt: resetsAt,
             observedAt: observedAt
         )
+    }
+
+    private static func resetDate(from raw: [String: Any]) -> Date? {
+        ProviderHelpers.parseISO8601(raw["resets_at"] as? String)
+            ?? ProviderHelpers.parseISO8601(raw["resetsAt"] as? String)
     }
 
     private static func number(_ value: Any?) -> Double? {

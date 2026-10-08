@@ -266,6 +266,41 @@ struct NativeHitTestingTests {
                 "\(edge): clicking the open provider's ring again must close details")
     }
 
+    @Test
+    func enablingAProviderGrowsTheLiveTabAndDisablingShrinksIt() throws {
+        let hud = try HUDClickHarness(edge: .right, mini: false)
+        defer { hud.tearDown() }
+
+        let before = hud.panel.frame
+        #expect(Set(hud.store.orderedReadings.map(\.providerId)) == ["claude", "codex"])
+        #expect(!hud.store.orderedReadings.contains { $0.providerId == "grokbot" })
+
+        var demo = HUDClickHarness.readings
+        demo.append(
+            UsageReading(
+                providerId: "grokbot", label: "Grok Bot", accountId: "t", authMode: "subscription", source: "test",
+                windows: [
+                    UsageWindow(id: "weekly", label: "Weekly usage", used: 10, limit: 100, usedPercent: 10, windowMinutes: 10080, resetsAt: Date()),
+                ],
+                status: .live, observedAt: Date(), error: nil
+            )
+        )
+        hud.store.setDemoMode(true, readings: demo)
+        if !hud.store.isProviderEnabled("grokbot") {
+            hud.store.toggle(providerId: "grokbot")
+        }
+        hud.pump(0.05)
+
+        #expect(hud.store.orderedReadings.contains { $0.providerId == "grokbot" })
+        #expect(hud.panel.frame.height > before.height, "the live tab must grow as soon as an icon is enabled")
+
+        hud.store.toggle(providerId: "grokbot")
+        hud.pump(0.05)
+
+        #expect(!hud.store.orderedReadings.contains { $0.providerId == "grokbot" })
+        #expect(hud.panel.frame.height == before.height, "the live tab must shrink as soon as an icon is disabled")
+    }
+
     @Test(arguments: NotchEdge.allCases)
     func miniRailAcceptsRingClicksCompactAndExpanded(edge: NotchEdge) throws {
         let hud = try HUDClickHarness(edge: edge, mini: true)

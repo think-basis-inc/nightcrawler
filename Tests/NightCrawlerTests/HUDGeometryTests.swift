@@ -155,6 +155,11 @@ func claudeRailExposesConcentricAllModelsAndFableWindows() {
     #expect(claude?.innerRingWindow?.id == "weekly_scoped")
     #expect(claude?.innerRingWindow?.label == "Fable")
     #expect((claude?.innerRingWindow?.usedPercent ?? 0) > (claude?.outerRingWindow?.usedPercent ?? 100))
+    let cursor = DemoData.readings.first { $0.providerId == "cursor" }
+    #expect(cursor?.outerRingWindow?.id == "included")
+    #expect(cursor?.innerRingWindow?.id == "api")
+    #expect(cursor?.thirdRingWindow == nil)
+    #expect(cursor?.outerRingWindow?.usedPercent == 42)
     let codex = DemoData.readings.first { $0.providerId == "codex" }
     #expect(codex?.innerRingWindow == nil)
 }

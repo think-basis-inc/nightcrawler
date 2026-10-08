@@ -119,3 +119,166 @@ func copilotBillingUsageBecomesMonthlyUsedPercentage() throws {
     #expect(abs(window.usedPercent - 13.6666666667) < 0.000001)
     #expect(window.resetsAt == ISO8601DateFormatter().date(from: "2026-10-01T00:00:00Z"))
 }
+
+@Test
+func copilotEmptyBillingItemsDoNotInventZeroPercentOfTheConfiguredPlan() throws {
+    let now = try #require(ISO8601DateFormatter().date(from: "2026-09-09T17:40:00Z"))
+    let result = CopilotQuotaParser.parseBilling(
+        ["usageItems": [Any](), "timePeriod": "2026-09"],
+        planLimit: 300,
+        now: now
+    )
+
+    #expect(result.windows.isEmpty, "empty GitHub billing items are not 0% of a Settings plan limit")
+    #expect(result.status != .live)
+}
+
+private func businessInternalUserQuota(creditsUsed: Any = 4909) -> [String: Any] {
+    [
+        "copilot_plan": "business",
+        "token_based_billing": true,
+        "quota_reset_date": "2026-10-01",
+        "quota_snapshots": [
+            "chat": [
+                "entitlement": 0,
+                "unlimited": true,
+                "percent_remaining": 100,
+                "remaining": 0,
+                "token_based_billing": true,
+            ],
+            "completions": [
+                "entitlement": 0,
+                "unlimited": true,
+                "percent_remaining": 100,
+                "remaining": 0,
+                "token_based_billing": true,
+            ],
+            "premium_interactions": [
+                "credits_used": creditsUsed,
+                "entitlement": 0,
+                "unlimited": true,
+                "percent_remaining": 100,
+                "remaining": 0,
+                "overage_count": 0,
+                "overage_permitted": true,
+                "token_based_billing": true,
+            ],
+        ],
+    ]
+}
+
+@Test
+func copilotInternalUserBusinessCreditsFillOneSeatIncludedAllowance() throws {
+    let result = CopilotQuotaParser.parseInternalUser(businessInternalUserQuota())
+    let window = try #require(result.windows.first)
+    let included = 1_900.0
+
+    #expect(result.status == .live)
+    #expect(result.windows.count == 1)
+    #expect(window.id == "premium_interactions")
+    #expect(window.label == "Included credits")
+    #expect(window.displaysPercent == true)
+    #expect(window.usedCount == 4909)
+    #expect(window.includedLimit == 1_900)
+    #expect(abs(window.usedPercent - (4909 / included * 100)) < 0.000001)
+    #expect(abs(window.usedPercent - (4909 / 300 * 100)) > 1, "must not use the Settings premium-request 300")
+    #expect(window.resetsAt == ISO8601DateFormatter().date(from: "2026-10-01T00:00:00Z"))
+}
+
+@Test
+func copilotInternalUserUnlimitedPercentRemainingIsNotZeroPercentUsed() throws {
+    var raw = businessInternalUserQuota()
+    guard var snapshots = raw["quota_snapshots"] as? [String: Any],
+          var premium = snapshots["premium_interactions"] as? [String: Any]
+    else {
+        throw URLError(.cannotDecodeContentData)
+    }
+    premium.removeValue(forKey: "credits_used")
+    snapshots["premium_interactions"] = premium
+    raw["quota_snapshots"] = snapshots
+
+    let result = CopilotQuotaParser.parseInternalUser(raw)
+    #expect(result.windows.isEmpty)
+    #expect(result.status != .live)
+    #expect(result.windows.contains { $0.usedPercent == 0 } == false)
+}
+
+@Test
+func copilotInternalUserPaidPlanKeepsVendorPercentRemaining() throws {
+    let raw: [String: Any] = [
+        "copilot_plan": "individual_pro",
+        "quota_reset_date": "2026-10-01",
+        "quota_snapshots": [
+            "premium_interactions": [
+                "entitlement": 300,
+                "remaining": 93.5,
+                "percent_remaining": 31.17,
+                "unlimited": false,
+            ],
+        ],
+    ]
+    let result = CopilotQuotaParser.parseInternalUser(raw)
+    let window = try #require(result.windows.first)
+    #expect(result.status == .live)
+    #expect(window.displaysPercent)
+    #expect(abs(window.usedPercent - 68.83) < 0.000001)
+    #expect(window.usedCount == nil)
+}
+
+@Test
+func copilotUnlimitedCLIPlusInternalUserCreditsReconcileToTheMeasuredCount() throws {
+    var raw = try loadQuotaFixture()
+    guard var snapshots = raw["quotaSnapshots"] as? [String: Any] else {
+        throw URLError(.cannotDecodeContentData)
+    }
+    for key in ["premium_interactions", "chat", "completions"] {
+        guard var snapshot = snapshots[key] as? [String: Any] else { continue }
+        snapshot["entitlementRequests"] = 0
+        snapshot["usedRequests"] = 0
+        snapshot["remainingPercentage"] = 100
+        snapshot["isUnlimitedEntitlement"] = true
+        snapshots[key] = snapshot
+    }
+    raw["quotaSnapshots"] = snapshots
+
+    let cli = CopilotQuotaParser.parse(raw)
+    let internalUser = CopilotQuotaParser.parseInternalUser(businessInternalUserQuota())
+    let result = GitHubCopilotUsageProvider.reconcile(cli: cli, billing: internalUser)
+
+    #expect(cli.windows.isEmpty)
+    #expect(result.status == .live)
+    #expect(result.windows.first?.usedCount == 4909)
+    #expect(result.windows.first?.includedLimit == 1_900)
+    #expect(result.windows.first?.displaysPercent == true)
+}
+
+@Test
+func copilotUnlimitedCLIPlusEmptyBillingStaysUnknown() throws {
+    var raw = try loadQuotaFixture()
+    guard var snapshots = raw["quotaSnapshots"] as? [String: Any] else {
+        throw URLError(.cannotDecodeContentData)
+    }
+    for key in ["premium_interactions", "chat", "completions"] {
+        guard var snapshot = snapshots[key] as? [String: Any] else { continue }
+        snapshot["entitlementRequests"] = 0
+        snapshot["usedRequests"] = 0
+        snapshot["remainingPercentage"] = 100
+        snapshot["isUnlimitedEntitlement"] = true
+        snapshots[key] = snapshot
+    }
+    raw["quotaSnapshots"] = snapshots
+
+    let cli = CopilotQuotaParser.parse(raw)
+    let billing = CopilotQuotaParser.parseBilling(
+        ["usageItems": [Any]()],
+        planLimit: 300,
+        now: try #require(ISO8601DateFormatter().date(from: "2026-09-09T17:40:00Z"))
+    )
+    let result = GitHubCopilotUsageProvider.reconcile(cli: cli, billing: billing)
+
+    #expect(cli.windows.isEmpty)
+    #expect(billing.windows.isEmpty)
+    #expect(result.windows.isEmpty)
+    #expect(result.status != .live)
+    #expect(result.windows.contains { $0.usedPercent == 0 } == false)
+}

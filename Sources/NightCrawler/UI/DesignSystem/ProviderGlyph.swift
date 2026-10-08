@@ -12,6 +12,7 @@ enum ProviderGlyph: String, Codable, Equatable {
     case antigravity = "gemini"
     case glm
     case grok
+    case grokbot
     case opencode
     case devin
     case cubic
@@ -48,6 +49,7 @@ enum ProviderGlyph: String, Codable, Equatable {
         case .antigravity: return 1.0
         case .glm:    return 0.95
         case .grok:   return 1.0
+        case .grokbot: return 1.0
         case .opencode: return 0.95
         case .devin: return 0.96
         case .cubic: return 0.96
@@ -65,8 +67,8 @@ enum ProviderGlyph: String, Codable, Equatable {
         case .antigravity: return GlyphOutline.antigravity
         case .glm:    return GlyphOutline.glm
         case .grok:   return GlyphOutline.grok
+        case .grokbot, .devin, .cubic, .copilot: return []
         case .opencode: return GlyphOutline.opencode
-        case .devin, .cubic, .copilot: return []
         }
     }
 }

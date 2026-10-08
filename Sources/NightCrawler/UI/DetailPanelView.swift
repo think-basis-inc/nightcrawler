@@ -36,9 +36,15 @@ struct DetailPanelView: View {
                     .padding(.top, HUDLayout.headerToBlock)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(reading.windows.enumerated()), id: \.element.id) { index, window in
+                    if !reading.isFreshlyObserved() {
+                        Text("Last reading is stale")
+                            .font(Typography.cardBody)
+                            .foregroundStyle(Palette.textSecondary)
+                            .padding(.top, HUDLayout.headerToBlock)
+                    }
+                    ForEach(Array(reading.displayWindows.enumerated()), id: \.element.id) { index, window in
                         WindowRow(window: window)
-                            .padding(.top, index == 0 ? HUDLayout.headerToBlock : HUDLayout.blockSpacing)
+                            .padding(.top, index == 0 && reading.isFreshlyObserved() ? HUDLayout.headerToBlock : HUDLayout.blockSpacing)
                     }
                 }
             }
@@ -75,33 +81,29 @@ struct WindowRow: View {
                     .foregroundStyle(Palette.textPrimary)
                 Spacer(minLength: 0)
                 if let reset = window.resetsAt {
-                    Text(relativeTime(reset))
+                    Text(ResetClock.caption(for: reset))
                         .foregroundStyle(Palette.textSecondary)
                 }
             }
             .font(Typography.cardBody)
             .lineLimit(1)
 
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Palette.barTrack)
-                    .frame(width: trackWidth, height: HUDLayout.barHeight)
-                Capsule()
-                    .fill(band.color)
-                    .frame(width: fillWidth, height: HUDLayout.barHeight)
+            if window.limit > 0 {
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Palette.barTrack)
+                        .frame(width: trackWidth, height: HUDLayout.barHeight)
+                    Capsule()
+                        .fill(band.color)
+                        .frame(width: fillWidth, height: HUDLayout.barHeight)
+                }
+                .padding(.top, HUDLayout.labelToBar)
             }
-            .padding(.top, HUDLayout.labelToBar)
 
-            Text("\(ProviderIcon.percentageText(for: window)) Used")
+            Text(UsageCaption.line(for: window))
                 .font(Typography.cardBody)
                 .foregroundStyle(Palette.textPrimary)
-                .padding(.top, HUDLayout.barToUsed)
+                .padding(.top, window.limit > 0 ? HUDLayout.barToUsed : HUDLayout.labelToBar)
         }
-    }
-
-    private func relativeTime(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }

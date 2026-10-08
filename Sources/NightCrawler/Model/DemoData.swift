@@ -38,8 +38,21 @@ enum DemoData {
                 authMode: "subscription",
                 source: "demo",
                 windows: [
-                    UsageWindow(id: "cursor_models", label: "Cursor Models", used: 3900, limit: 10000, usedPercent: 39, windowMinutes: 43200, resetsAt: now.addingTimeInterval(12 * 86400)),
-                    UsageWindow(id: "other_models", label: "Other Models", used: 100, limit: 10000, usedPercent: 1, windowMinutes: 43200, resetsAt: now.addingTimeInterval(12 * 86400))
+                    UsageWindow(id: "included", label: "Included models", used: 4200, limit: 10000, usedPercent: 42, windowMinutes: 43200, resetsAt: now.addingTimeInterval(12 * 86400)),
+                    UsageWindow(id: "api", label: "Other Models", used: 1300, limit: 10000, usedPercent: 13, windowMinutes: 43200, resetsAt: now.addingTimeInterval(12 * 86400)),
+                ],
+                status: .live,
+                observedAt: now,
+                error: nil
+            ),
+            UsageReading(
+                providerId: "grokbot",
+                label: "Grok Bot",
+                accountId: nil,
+                authMode: "subscription",
+                source: "demo",
+                windows: [
+                    UsageWindow(id: "weekly", label: "Weekly usage", used: 1000, limit: 10000, usedPercent: 10, windowMinutes: 10080, resetsAt: now.addingTimeInterval(5 * 86400))
                 ],
                 status: .live,
                 observedAt: now,

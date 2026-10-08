@@ -33,8 +33,12 @@ private final class CLISpy: @unchecked Sendable {
     }
 }
 
+private final class OAuthCallSpy: @unchecked Sendable {
+    var called = false
+}
+
 @Test
-func successfulOAuthPayloadMissingFableIsAugmentedWithClaudeCLIUsageClientsFableWindow() async throws {
+func successfulOAuthReturnsLiveWindowsWithoutWaitingOnClaudeCLI() async throws {
     let credentials = ClaudeCredentialStore(
         fileURL: URL(fileURLWithPath: "/fixture/credentials.json"),
         reader: { _ in credentialJSON() }
@@ -89,9 +93,7 @@ func successfulOAuthPayloadMissingFableIsAugmentedWithClaudeCLIUsageClientsFable
     #expect(reading.source == "claude_oauth_usage")
     #expect(reading.windows.contains { $0.id == "session" })
     #expect(reading.windows.contains { $0.id == "weekly_all" })
-    #expect(reading.windows.contains { $0.id == "fable" })
-    #expect(reading.innerRingWindow?.label == "Fable")
-    #expect(reading.innerRingWindow?.usedPercent == 85)
+    #expect(reading.windows.contains { $0.id == "fable" } == false)
     #expect(reading.windows.first { $0.id == "session" }?.usedPercent == 5)
     #expect(reading.windows.first { $0.id == "weekly_all" }?.usedPercent == 54)
 }
@@ -193,4 +195,153 @@ func claudeWindowAugmentationLeavesWindowsUnchangedWhenCLILacksFable() {
     let augmented = ClaudeCodeUsageProvider.augment(oauthWindows: oauth, with: cli)
 
     #expect(augmented.map(\.id) == ["session"])
+}
+
+private func cacheJSON(
+    fetchedAt: Date,
+    sessionPercent: Double,
+    sessionResetsAt: Date,
+    weeklyPercent: Double,
+    fablePercent: Double,
+    weeklyResetsAt: Date
+) -> Data {
+    let iso = ISO8601DateFormatter()
+    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let payload: [String: Any] = [
+        "cachedUsageUtilization": [
+            "fetchedAtMs": fetchedAt.timeIntervalSince1970 * 1000,
+            "utilization": [
+                "five_hour": [
+                    "utilization": sessionPercent,
+                    "resets_at": iso.string(from: sessionResetsAt),
+                ],
+                "seven_day": [
+                    "utilization": weeklyPercent,
+                    "resets_at": iso.string(from: weeklyResetsAt),
+                ],
+                "limits": [
+                    [
+                        "kind": "session",
+                        "percent": sessionPercent,
+                        "resets_at": iso.string(from: sessionResetsAt),
+                    ],
+                    [
+                        "kind": "weekly_all",
+                        "percent": weeklyPercent,
+                        "resets_at": iso.string(from: weeklyResetsAt),
+                    ],
+                    [
+                        "kind": "weekly_scoped",
+                        "percent": fablePercent,
+                        "resets_at": iso.string(from: weeklyResetsAt),
+                        "scope": ["model": ["display_name": "Fable"]],
+                    ],
+                ],
+            ],
+        ]
+    ]
+    return try! JSONSerialization.data(withJSONObject: payload)
+}
+
+@Test
+func claudeStaleCacheDoesNotBlockLiveUsageRefresh() async throws {
+    let now = Date()
+    let cacheData = cacheJSON(
+        fetchedAt: now.addingTimeInterval(-16 * 60 * 60),
+        sessionPercent: 2,
+        sessionResetsAt: now.addingTimeInterval(-12 * 60 * 60),
+        weeklyPercent: 64,
+        fablePercent: 100,
+        weeklyResetsAt: now.addingTimeInterval(2 * 24 * 60 * 60)
+    )
+    let credentials = ClaudeCredentialStore(
+        fileURL: URL(fileURLWithPath: "/fixture/credentials.json"),
+        reader: { _ in credentialJSON() }
+    )
+    let cache = ClaudeLocalUsageCache(
+        fileURL: URL(fileURLWithPath: "/fixture/claude.json"),
+        reader: { _ in cacheData }
+    )
+    let oauthJSON = """
+    {
+        "limits": [
+            {
+                "kind": "weekly_scoped",
+                "percent": 80,
+                "resets_at": "2026-09-11T19:00:00Z"
+            }
+        ],
+        "five_hour": {
+            "utilization": 11,
+            "resets_at": "2026-09-09T22:00:00Z"
+        },
+        "seven_day": {
+            "utilization": 70,
+            "resets_at": "2026-09-11T19:00:00Z"
+        }
+    }
+    """
+    let httpResponse = HTTPURLResponse(
+        url: URL(string: "https://api.anthropic.com/api/oauth/usage")!,
+        statusCode: 200,
+        httpVersion: "HTTP/1.1",
+        headerFields: ["Content-Type": "application/json"]
+    )!
+    let spy = OAuthCallSpy()
+    let provider = ClaudeCodeUsageProvider(
+        credentials: credentials,
+        localUsage: cache,
+        sessionDataLoader: { _ in
+            spy.called = true
+            return (Data(oauthJSON.utf8), httpResponse)
+        },
+        cliWindowsReader: { [] }
+    )
+
+    let reading = await provider.read()
+
+    #expect(spy.called, "a 16-hour-old Claude cache must not skip the live usage source")
+    #expect(reading.source == "claude_oauth_usage")
+    #expect(reading.windows.contains { $0.id == "session" && $0.usedPercent == 11 })
+    #expect(reading.windows.contains { $0.id == "weekly_all" && $0.usedPercent == 70 })
+    #expect(reading.windows.contains { $0.id == "weekly_scoped" && $0.usedPercent == 80 })
+    #expect(reading.windows.contains { $0.id == "session" && $0.usedPercent == 2 } == false)
+}
+
+@Test
+func claudeOAuthFailureMustNotResurrectADayOldCacheAsLive() async throws {
+    let now = Date()
+    let cacheData = cacheJSON(
+        fetchedAt: now.addingTimeInterval(-16 * 60 * 60),
+        sessionPercent: 2,
+        sessionResetsAt: now.addingTimeInterval(2 * 60 * 60),
+        weeklyPercent: 64,
+        fablePercent: 100,
+        weeklyResetsAt: now.addingTimeInterval(2 * 24 * 60 * 60)
+    )
+    let credentials = ClaudeCredentialStore(
+        fileURL: URL(fileURLWithPath: "/fixture/credentials.json"),
+        reader: { _ in credentialJSON() }
+    )
+    let cache = ClaudeLocalUsageCache(
+        fileURL: URL(fileURLWithPath: "/fixture/claude.json"),
+        reader: { _ in cacheData }
+    )
+    let httpResponse = HTTPURLResponse(
+        url: URL(string: "https://api.anthropic.com/api/oauth/usage")!,
+        statusCode: 401,
+        httpVersion: "HTTP/1.1",
+        headerFields: ["Content-Type": "application/json"]
+    )!
+    let provider = ClaudeCodeUsageProvider(
+        credentials: credentials,
+        localUsage: cache,
+        sessionDataLoader: { _ in (Data(), httpResponse) },
+        cliWindowsReader: { [] }
+    )
+
+    let reading = await provider.read()
+
+    #expect(reading.status != .live, "a 16-hour-old Claude cache must not be shown as current after OAuth fails")
+    #expect(reading.windows.contains { $0.id == "session" && $0.usedPercent == 2 } == false)
 }

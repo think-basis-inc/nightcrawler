@@ -24,6 +24,37 @@ func claudeUsageScreenSeparatesAllModelsFromFable() throws {
 }
 
 @Test
+func claudeUsageScreenParserReadsResetInstantsFromTheResetsLine() throws {
+    let output = """
+    Current session
+    0% 0% used
+    Resets 9:50pm (America/Toronto)
+    Current week (all models)
+    54% 54% used
+    Resets Sep 11 at 3pm (America/Toronto)
+    Current week (Fable)
+    85% 85% used
+    Resets Sep 11 at 3pm (America/Toronto)
+    """
+    let now = Date(timeIntervalSince1970: 1_788_868_800) // 2026-09-10T06:00:00Z
+    let windows = ClaudeCLIUsageParser.windows(from: Data(output.utf8), now: now)
+
+    let session = try #require(windows.first { $0.id == "session" })
+    let weekly = try #require(windows.first { $0.id == "weekly_all" })
+    let fable = try #require(windows.first { $0.id == "fable" })
+
+    #expect(session.resetsAt != nil, "Claude session reset time must not be dropped")
+    #expect(weekly.resetsAt != nil, "Claude weekly reset must include a calendar instant")
+    #expect(fable.resetsAt != nil)
+    let weeklyReset = try #require(weekly.resetsAt)
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "America/Toronto")!
+    #expect(calendar.component(.month, from: weeklyReset) == 9)
+    #expect(calendar.component(.day, from: weeklyReset) == 11)
+    #expect(calendar.component(.hour, from: weeklyReset) == 15)
+}
+
+@Test
 func claudeUsageScreenParserToleratesTerminalControlSequencesAndDuplicatePercentages() {
     let output = "\u{001B}[2KCurrent week (all models)\r\n\u{001B}[G54% 54% used\r\n"
     let windows = ClaudeCLIUsageParser.windows(from: Data(output.utf8))

@@ -21,6 +21,35 @@ private func cubicCheck(summary: String = "cubic has reviewed 302,778 of the 300
      "status": "completed", "completed_at": "2026-09-07T20:21:26Z", "output": ["summary": summary]]
 }
 
+private func cubicGraphQLPayload(runs: [[String: Any]]) -> [String: Any] {
+    [
+        "data": [
+            "search": [
+                "nodes": runs.map { run in
+                    [
+                        "commits": [
+                            "nodes": [
+                                [
+                                    "commit": [
+                                        "checkSuites": [
+                                            "nodes": [
+                                                [
+                                                    "app": ["databaseId": 1_082_092, "slug": "cubic-dev-ai"],
+                                                    "checkRuns": ["nodes": [run]],
+                                                ]
+                                            ]
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ] as [String: Any]
+                }
+            ]
+        ]
+    ]
+}
+
 @Test
 func directDevinQuotasConvertRemainingToUsedAndDoNotInventMissingPools() {
     let reading = DevinUsageProvider.parse(devinFixture, now: sampleNow)
@@ -86,14 +115,77 @@ func cubicReportsPreserveObservationTimeAndRejectExpiredSpoofedOrSupersededRepor
     #expect(CubicUsageProvider.parse([cubicCheck(), newer], repository: "owner/repo", now: sampleNow).windows.isEmpty)
 }
 
+@MainActor
+@Test
+func cubicIconKeepsALiveAllowanceAfterReviewsResumeWithoutANewLineCount() {
+    let resumeNow = ProviderHelpers.parseISO8601("2026-09-18T03:50:00Z")!
+    var resumed = cubicCheck(summary: "AI review completed with 1 review. Found 1 issue across 5 files.")
+    resumed["completed_at"] = "2026-09-18T03:49:51Z"
+    let reading = CubicUsageProvider.parse([cubicCheck(), resumed], repository: "owner/repo", now: resumeNow)
+    #expect(reading.status == .live)
+    #expect(reading.windows.first?.used == 0)
+    #expect(reading.windows.first?.limit == 300_000)
+    #expect(reading.windows.first?.usedPercent == 0)
+    #expect(reading.windows.first?.resetsAt == ProviderHelpers.parseISO8601("2026-10-17T00:00:00Z"))
+    #expect(reading.observedAt == ProviderHelpers.parseISO8601("2026-09-18T03:49:51Z"))
+    #expect(ProviderIcon.percentageText(for: reading, now: resumeNow) == "0.0%")
+}
+
+@Test
+func cubicReadsOrgReviewsAfterTheMonthlyAllowanceResets() async throws {
+    let resumeNow = ProviderHelpers.parseISO8601("2026-09-18T03:50:00Z")!
+    let provider = CubicUsageProvider(repository: { "owner/repo" }, runner: { command, timeout, limit in
+        #expect(command.prefix(4) == ["/test/gh", "api", "--hostname", "github.com"])
+        #expect(!command.contains { $0.localizedCaseInsensitiveContains("mutation") })
+        #expect(timeout <= 10 && limit == 1_048_576)
+        if command.contains("graphql") {
+            #expect(command.contains { $0.contains("org:owner") })
+            let payload = cubicGraphQLPayload(runs: [
+                [
+                    "name": "cubic · AI code reviewer",
+                    "status": "COMPLETED",
+                    "completedAt": "2026-09-18T03:49:51Z",
+                    "conclusion": "SUCCESS",
+                    "summary": "AI review completed with 1 review. Found 1 issue across 5 files.",
+                    "title": "AI review completed",
+                ],
+                [
+                    "name": "cubic · AI code reviewer",
+                    "status": "COMPLETED",
+                    "completedAt": "2026-09-07T20:21:26Z",
+                    "conclusion": "NEUTRAL",
+                    "summary": "cubic has reviewed 302,778 of the 300,000 allowed lines of code this month. Reviews resume on 17 September 2026 (in 10 days).",
+                    "title": "AI review line limit reached",
+                ],
+            ])
+            return BillingCommandResult(exitCode: 0, stdout: try! JSONSerialization.data(withJSONObject: payload))
+        }
+        return BillingCommandResult(exitCode: 1, stdout: Data())
+    }, executable: "/test/gh", now: { resumeNow })
+    let reading = await provider.read()
+    #expect(reading.windows.first?.used == 0)
+    #expect(reading.windows.first?.limit == 300_000)
+    #expect(reading.windows.first?.usedPercent == 0)
+}
+
 @Test
 func cubicFetchesGitHubDirectlyAndNeverRunsAReview() async throws {
     let provider = CubicUsageProvider(repository: { "owner/repo" }, runner: { command, timeout, limit in
-        #expect(command.count == 7)
-        #expect(command.prefix(6) == ["/test/gh", "api", "--hostname", "github.com", "--method", "GET"])
+        #expect(command.prefix(4) == ["/test/gh", "api", "--hostname", "github.com"])
+        #expect(!command.contains { $0.localizedCaseInsensitiveContains("mutation") })
         #expect(timeout <= 10 && limit == 1_048_576)
         let payload: Any
-        if command.last!.contains("/pulls?") {
+        if command.contains("graphql") {
+            #expect(command.contains { $0.contains("org:owner") })
+            payload = cubicGraphQLPayload(runs: [[
+                "name": "cubic · AI code reviewer",
+                "status": "COMPLETED",
+                "completedAt": "2026-09-07T20:21:26Z",
+                "conclusion": "NEUTRAL",
+                "summary": "cubic has reviewed 302,778 of the 300,000 allowed lines of code this month. Reviews resume on 17 September 2026 (in 10 days).",
+                "title": "AI review line limit reached",
+            ]])
+        } else if command.last!.contains("/pulls?") {
             payload = [["head": ["sha": String(repeating: "a", count: 40)]]]
         } else {
             #expect(command.last!.contains("/check-runs?") == true)

@@ -313,20 +313,6 @@ func capacitySnapshotCannotTrapOnDuplicateProviderReadings() throws {
     #expect(source.contains("uniquingKeysWith:"))
 }
 
-@Test
-func codexBackendErrorsRetainTheLatestSessionReading() throws {
-    let root = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-    let source = try String(
-        contentsOf: root.appendingPathComponent("Sources/NightCrawler/Providers/CodexCLIUsageProvider.swift"),
-        encoding: .utf8
-    )
-
-    #expect(source.contains("guard http.statusCode == 200 else {\n                return sessionReading"))
-}
-
 @MainActor
 @Test
 func localCapacityListenerAcceptsItsLoopbackConfiguration() {

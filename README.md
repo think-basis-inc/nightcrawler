@@ -9,6 +9,7 @@ Built for people who run multiple agents (Claude Code, Codex, Cursor, GitHub Cop
 - A black rail welds into the chosen screen edge (right, left, top, or bottom) with inverse rounded flares.
 - Each enabled provider shows the same compact percentage convention—always percent used—with a colored ring: green under 50%, yellow to 70%, orange to 100%, red when exhausted.
 - Claude shows two concentric arcs when both All models and Fable weekly windows exist.
+- Cursor shows two concentric arcs: included models (monthly headline) and Other Models. Grok Bot weekly allowance is its own icon.
 - Click an icon or the tucked settings handle to open an attached slideout with a single teardrop joining it to the rail.
 
 ## Why not a fork of codenotch?
@@ -58,15 +59,15 @@ NightCrawler reads credentials the tools already store locally. Install and sign
 | Claude Code | Claude Code’s `~/.claude.json` usage cache (no live session). OAuth and local `/usage` are fallbacks only when that cache is missing. |
 | Codex CLI | Current local session rate-limit snapshots, with `~/.codex/auth.json` as the backend fallback |
 | Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
-| GitHub Copilot | Copilot CLI metadata, then `gh api` premium-request billing when the CLI reports no finite allowance |
+| GitHub Copilot | Copilot CLI metadata, then `gh api copilot_internal/user` (the VS Code quota snapshot, including Business `credits_used`), then premium-request billing |
 | Grok | `~/.grok/auth.json` |
 | Devin | Direct account-quota request using the existing Devin CLI login (`~/.local/share/devin/credentials.toml`, or XDG data home) |
-| Cubic | Direct read-only GitHub check lookup using `gh` authentication; configure owner/repository in Settings. Last reported allowance, not a live balance. No review is triggered. |
+| Cubic | Direct read-only GitHub check lookup using `gh` authentication; configure owner/repository in Settings. Last reported allowance, not a live balance. After a monthly reset, shows 0% until Cubic publishes a new line count. No review is triggered. |
 | OpenCode | `~/.local/share/opencode/auth.json` |
 | Antigravity | `gemini` / `antigravity` Keychain item |
 | ZCode / GLM | `~/.claude/settings.json`, `~/.zcode/v2/config.json`, or `~/.local/share/opencode/auth.json` |
 
-Copilot billing percentages need the matching monthly plan limit selected in Settings (Free 50, Pro 300, or Pro+ 1500). GitHub’s billing endpoint also requires one-time **Plan: read** authorization on the existing `gh` login; NightCrawler never reads or stores the GitHub token.
+Copilot Business seats have no per-user percent in GitHub’s snapshot. NightCrawler shows `credits_used` against **one** Business seat of 1,900 included AI credits (not the Settings 50/300/1500 premium-request limits). Individual premium-request percentages still need the matching monthly plan limit in Settings. GitHub’s billing endpoint also requires one-time **Plan: read** authorization on the existing `gh` login; NightCrawler never reads or stores the GitHub token.
 
 ## Demo mode
 

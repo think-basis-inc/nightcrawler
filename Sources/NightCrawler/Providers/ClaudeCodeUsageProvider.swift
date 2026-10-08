@@ -34,7 +34,7 @@ struct ClaudeCodeUsageProvider: UsageProvider {
     var isAvailable: Bool { true }
 
     func read() async -> UsageReading {
-        if let cached = readingFromLocalCache() {
+        if let cached = readingFromLocalCache(), Self.isFresh(cached) {
             return cached
         }
         guard let token = await credentials.read() else {
@@ -60,10 +60,10 @@ struct ClaudeCodeUsageProvider: UsageProvider {
                 return makeReading(status: .error("Bad response"))
             }
             if http.statusCode == 401 || http.statusCode == 403 {
-                return await readFromLocalOrCLI()
+                return await readFromCLI()
             }
             if http.statusCode == 429 {
-                if let cached = readingFromLocalCache() { return cached }
+                if let cached = readingFromLocalCache(), Self.isFresh(cached) { return cached }
                 return makeReading(status: .error("Rate limited by Claude"))
             }
             guard http.statusCode == 200 else {
@@ -73,11 +73,9 @@ struct ClaudeCodeUsageProvider: UsageProvider {
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             let payload = try decoder.decode(UsageResponse.self, from: data)
-            var windows = payload.windows()
-            if !windows.isEmpty, !windows.contains(where: { $0.id == "fable" || $0.id == "weekly_scoped" }) {
-                let cliWindows = await readCLIWindows()
-                windows = Self.augment(oauthWindows: windows, with: cliWindows)
-            }
+            // Return OAuth immediately. Waiting on `claude /usage` here discarded
+            // live session/weekly numbers whenever the CLI hung past the poll budget.
+            let windows = payload.windows()
             let status: UsageReading.ReadingStatus = windows.isEmpty
                 ? .error("Claude returned incomplete usage windows")
                 : .live
@@ -93,8 +91,8 @@ struct ClaudeCodeUsageProvider: UsageProvider {
                 error: nil
             )
         } catch {
-            if let cached = readingFromLocalCache() { return cached }
-            return makeReading(status: .error("Claude usage request failed"))
+            if let cached = readingFromLocalCache(), Self.isFresh(cached) { return cached }
+            return await readFromCLI()
         }
     }
 
@@ -105,9 +103,10 @@ struct ClaudeCodeUsageProvider: UsageProvider {
         return await cliUsage.readWindows()
     }
 
-    private func readFromLocalOrCLI() async -> UsageReading {
-        if let cached = readingFromLocalCache() { return cached }
-        return await readFromCLI()
+    private static func isFresh(_ reading: UsageReading, now: Date = Date()) -> Bool {
+        guard let observedAt = reading.observedAt else { return false }
+        let age = now.timeIntervalSince(observedAt)
+        return age <= CapacitySnapshot.liveFreshnessInterval && age >= -120
     }
 
     private func readingFromLocalCache() -> UsageReading? {
@@ -129,7 +128,7 @@ struct ClaudeCodeUsageProvider: UsageProvider {
     private func readFromCLI() async -> UsageReading {
         let windows = await readCLIWindows()
         guard !windows.isEmpty else {
-            if let cached = readingFromLocalCache() { return cached }
+            if let cached = readingFromLocalCache(), Self.isFresh(cached) { return cached }
             return makeReading(
                 status: .needsAuth,
                 error: "Open Claude Code once so NightCrawler can read subscription usage"
@@ -200,9 +199,7 @@ struct ClaudeCodeUsageProvider: UsageProvider {
             var collected: [String: UsageWindow] = [:]
 
             for limit in limits ?? [] {
-                guard let percent = limit.percent,
-                      let resetsAt = ProviderHelpers.parseISO8601(limit.resetsAt)
-                else { continue }
+                guard let percent = limit.percent else { continue }
                 let window = UsageWindow(
                     id: limit.kind,
                     label: label(for: limit.kind),
@@ -210,7 +207,7 @@ struct ClaudeCodeUsageProvider: UsageProvider {
                     limit: 10000,
                     usedPercent: percent,
                     windowMinutes: windowMinutes(for: limit.kind),
-                    resetsAt: resetsAt
+                    resetsAt: ProviderHelpers.parseISO8601(limit.resetsAt)
                 )
                 collected[limit.kind] = window
             }
@@ -228,8 +225,7 @@ struct ClaudeCodeUsageProvider: UsageProvider {
         private func merge(window: Window?, id: String, label: String, into collected: inout [String: UsageWindow]) {
             guard collected[id] == nil,
                   let window,
-                  let percent = window.utilization,
-                  let resetsAt = ProviderHelpers.parseISO8601(window.resetsAt)
+                  let percent = window.utilization
             else { return }
             collected[id] = UsageWindow(
                 id: id,
@@ -238,7 +234,7 @@ struct ClaudeCodeUsageProvider: UsageProvider {
                 limit: 10000,
                 usedPercent: percent,
                 windowMinutes: windowMinutes(for: id),
-                resetsAt: resetsAt
+                resetsAt: ProviderHelpers.parseISO8601(window.resetsAt)
             )
         }
 

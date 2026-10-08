@@ -1,4 +1,6 @@
 .DS_Store
+.codegraph/
+.serena/
 .build/
 *.xcodeproj
 *.xcworkspace
@@ -6,3 +8,4 @@ coverage/
 *.dmg
 *.app
 *.zip
+/.grok/rules/hindsight-session.md
