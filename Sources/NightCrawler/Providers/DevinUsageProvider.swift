@@ -88,10 +88,14 @@ struct DevinUsageProvider: UsageProvider {
               info["billingStrategy"] as? String == "BILLING_STRATEGY_QUOTA" else {
             return empty(.unknown, "Devin did not report a subscription quota")
         }
+        // Connect JSON omits zero-valued fields: an exhausted window keeps its
+        // reset time but drops its remaining percent, so that pairing means 0%.
         let windows = [("daily", 1440), ("weekly", 10080)].compactMap { period, minutes -> UsageWindow? in
-            guard let remaining = number(plan[period + "QuotaRemainingPercent"]), (0...100).contains(remaining) else { return nil }
             let reset = number(plan[period + "QuotaResetAtUnix"])
                 .flatMap { (1...253_402_300_799).contains($0) ? Date(timeIntervalSince1970: $0) : nil }
+            let rawRemaining = plan[period + "QuotaRemainingPercent"]
+            guard let remaining = rawRemaining == nil ? (reset == nil ? nil : 0) : number(rawRemaining),
+                  (0...100).contains(remaining) else { return nil }
             return UsageWindow(id: period, label: period.capitalized + " quota", used: Int((100 - remaining) * 100),
                 limit: 10_000, usedPercent: 100 - remaining, windowMinutes: minutes, resetsAt: reset)
         }

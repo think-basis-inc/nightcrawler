@@ -57,7 +57,7 @@ func directDevinQuotasConvertRemainingToUsedAndDoNotInventMissingPools() {
     #expect(reading.source == "devin_user_status")
     #expect(reading.observedAt == sampleNow)
     for invalid in ["true", "-1", "101", "null", "\"NaN\""] {
-        let data = Data("{\"userStatus\":{\"planStatus\":{\"weeklyQuotaRemainingPercent\":\(invalid)}},\"planInfo\":{\"billingStrategy\":\"BILLING_STRATEGY_QUOTA\"}}".utf8)
+        let data = Data("{\"userStatus\":{\"planStatus\":{\"weeklyQuotaRemainingPercent\":\(invalid),\"weeklyQuotaResetAtUnix\":\"1791705600\"}},\"planInfo\":{\"billingStrategy\":\"BILLING_STRATEGY_QUOTA\"}}".utf8)
         #expect(DevinUsageProvider.parse(data).windows.isEmpty)
     }
     let weeklyOnly = Data(#"{"userStatus":{"planStatus":{"weeklyQuotaRemainingPercent":0}},"planInfo":{"billingStrategy":"BILLING_STRATEGY_QUOTA"}}"#.utf8)
