@@ -124,6 +124,28 @@ func grokRenewalAfterAFailureRecoversAsSoonAsTheCLISavesASession() async throws 
 }
 
 @Test
+func grokSessionRenewedOutsideTheAppClearsEarlierRenewalFailures() async throws {
+    let fixture = try GrokFixture()
+    try fixture.writeSession(token: "expired", expiresAt: start.addingTimeInterval(-60))
+    let provider = fixture.provider(refresher: fixture.cliChangesNothing())
+    for _ in 0..<4 {
+        _ = await provider.read()
+        fixture.clock.update { $0 += 3600 }
+    }
+    #expect(fixture.refreshes.get() == 4)
+
+    // The user runs grok themselves; the app reads usage with that session.
+    try fixture.writeSession(token: "renewed", expiresAt: fixture.clock.get().addingTimeInterval(6 * 3600))
+    #expect(await provider.read().status == .live)
+
+    try fixture.writeSession(token: "expired-again", expiresAt: fixture.clock.get().addingTimeInterval(-60))
+    _ = await provider.read()
+    fixture.clock.update { $0 += 2 * 60 }
+    _ = await provider.read()
+    #expect(fixture.refreshes.get() == 6, "a new session's first failure waits minutes, not the old hour")
+}
+
+@Test
 func grokSessionWithoutARefreshTokenNeverStartsTheCLI() async throws {
     let fixture = try GrokFixture()
     try fixture.writeSession(token: "expired", expiresAt: start.addingTimeInterval(-60), refreshToken: nil)

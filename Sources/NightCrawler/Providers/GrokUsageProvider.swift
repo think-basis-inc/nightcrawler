@@ -33,6 +33,8 @@ struct GrokUsageProvider: UsageProvider {
             return makeReading(status: .needsAuth, error: "Run grok login to enable usage reading")
         }
         var renewed = false
+        // Time-based even for a token Grok rejected earlier: the CLI refreshes
+        // once a token has expired, which it may not do for a revoked one.
         if credentials.expiresAt <= now() {
             guard let fresh = await renew(credentials, rejected: false) else {
                 return makeReading(status: .needsAuth, error: "Grok login expired; run grok login")
@@ -86,6 +88,9 @@ struct GrokUsageProvider: UsageProvider {
             guard http.statusCode == 200 else {
                 return makeReading(status: .error("Grok returned \(http.statusCode)"))
             }
+            // The session works, however it was renewed, so a later expiry
+            // starts its retries from the shortest wait.
+            renewalGate.clearFailures()
 
             guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let config = root["config"] as? [String: Any]
@@ -265,6 +270,13 @@ struct GrokUsageProvider: UsageProvider {
                 }
                 running = true
                 return true
+            }
+        }
+
+        func clearFailures() {
+            lock.withLock {
+                failures = 0
+                nextAttempt = .distantPast
             }
         }
 
