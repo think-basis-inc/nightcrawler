@@ -7,9 +7,6 @@ struct GrokUsageProvider: UsageProvider {
     let label = "Grok"
 
     private static let trustedIssuer = "https://auth.x.ai"
-    /// Grok access tokens last six hours; a failed renewal waits this long
-    /// before the next CLI start rather than relaunching on every poll.
-    private static let renewalRetryInterval: TimeInterval = 10 * 60
 
     private let authPath: String
     private let loader: QuotaHTTP.Loader
@@ -37,7 +34,7 @@ struct GrokUsageProvider: UsageProvider {
         }
         var renewed = false
         if credentials.expiresAt <= now() {
-            guard await renew(credentials), let fresh = loadCredentials(), fresh.expiresAt > now() else {
+            guard let fresh = await renew(credentials, rejected: false) else {
                 return makeReading(status: .needsAuth, error: "Grok login expired; run grok login")
             }
             credentials = fresh
@@ -45,23 +42,27 @@ struct GrokUsageProvider: UsageProvider {
         }
 
         let reading = await readUsage(with: credentials)
-        // A token can be revoked before its recorded expiry; renew once and
-        // retry only when the CLI actually saved a different one.
-        guard reading.status == .needsAuth, !renewed, await renew(credentials),
-              let fresh = loadCredentials(), fresh.accessToken != credentials.accessToken
+        // A token can be revoked before its recorded expiry; renew once per
+        // rejected token and retry only with the one the CLI saved instead.
+        guard reading.status == .needsAuth, !renewed,
+              let fresh = await renew(credentials, rejected: true)
         else { return reading }
         return await readUsage(with: fresh)
     }
 
-    /// Starts the CLI at most once per retry interval and never twice at once,
-    /// since concurrent refreshes could race on a rotating refresh token.
-    private func renew(_ credentials: Credentials) async -> Bool {
+    /// Lets the CLI renew the session and returns the new credentials, or nil
+    /// when it saved none. Never runs two CLIs at once, since concurrent
+    /// refreshes could race on a rotating refresh token.
+    private func renew(_ credentials: Credentials, rejected: Bool) async -> Credentials? {
         guard credentials.canRenew,
-              renewalGate.begin(at: now(), retryInterval: Self.renewalRetryInterval)
-        else { return false }
+              renewalGate.begin(at: now(), rejectedToken: rejected ? credentials.accessToken : nil)
+        else { return nil }
         await Task.detached(operation: refresher).value
-        renewalGate.end()
-        return true
+        let fresh = loadCredentials().flatMap {
+            $0.expiresAt > now() && $0.accessToken != credentials.accessToken ? $0 : nil
+        }
+        renewalGate.end(at: now(), renewed: fresh != nil)
+        return fresh
     }
 
     private func readUsage(with credentials: Credentials) async -> UsageReading {
@@ -144,9 +145,11 @@ struct GrokUsageProvider: UsageProvider {
     /// Lets the Grok CLI renew its own session. Any CLI start refreshes an
     /// expired access token from the stored refresh token, so this never reads
     /// or sends credentials itself; the caller re-reads auth.json afterwards.
+    /// The generous timeout avoids killing the CLI between the server rotating
+    /// the refresh token and the CLI saving it; a slow run only costs one read.
     static func refreshWithCLI() {
         guard let executable = RestrictedProcess.resolveOnPath("grok") else { return }
-        _ = CopilotBillingClient.run([executable, "models"], timeout: 10, maxBytes: 1_048_576)
+        _ = CopilotBillingClient.run([executable, "models"], timeout: 30, maxBytes: 1_048_576)
     }
 
     static func windows(from config: [String: Any]) -> [UsageWindow] {
@@ -243,23 +246,34 @@ struct GrokUsageProvider: UsageProvider {
         let canRenew: Bool
     }
 
+    /// One CLI renewal at a time. Failures back off from two minutes up to an
+    /// hour so a wake without network retries soon but a broken CLI does not
+    /// relaunch every poll; a token Grok rejects is renewed only once.
     private final class RenewalGate: @unchecked Sendable {
         private let lock = NSLock()
         private var running = false
-        private var lastStart: Date?
+        private var failures = 0
+        private var nextAttempt = Date.distantPast
+        private var lastRejectedToken: String?
 
-        func begin(at date: Date, retryInterval: TimeInterval) -> Bool {
+        func begin(at date: Date, rejectedToken: String?) -> Bool {
             lock.withLock {
-                if running { return false }
-                if let lastStart, date.timeIntervalSince(lastStart) < retryInterval { return false }
+                guard !running, date >= nextAttempt else { return false }
+                if let rejectedToken {
+                    guard rejectedToken != lastRejectedToken else { return false }
+                    lastRejectedToken = rejectedToken
+                }
                 running = true
-                lastStart = date
                 return true
             }
         }
 
-        func end() {
-            lock.withLock { running = false }
+        func end(at date: Date, renewed: Bool) {
+            lock.withLock {
+                running = false
+                failures = renewed ? 0 : failures + 1
+                nextAttempt = renewed ? date : date.addingTimeInterval(min(120 * pow(2, Double(failures - 1)), 3600))
+            }
         }
     }
 }

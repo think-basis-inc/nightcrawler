@@ -82,7 +82,7 @@ func expiredGrokSessionIsRenewedThroughTheCLIBeforeReadingUsage() async throws {
 }
 
 @Test
-func failedGrokRenewalAsksForSignInAndWaitsBeforeStartingTheCLIAgain() async throws {
+func failedGrokRenewalsAskForSignInAndBackOffBeforeStartingTheCLIAgain() async throws {
     let fixture = try GrokFixture()
     try fixture.writeSession(token: "expired", expiresAt: start.addingTimeInterval(-60))
     let provider = fixture.provider(refresher: fixture.cliChangesNothing())
@@ -91,10 +91,36 @@ func failedGrokRenewalAsksForSignInAndWaitsBeforeStartingTheCLIAgain() async thr
     #expect(await provider.read().status == .needsAuth)
     #expect(fixture.refreshes.get() == 1, "a minute-by-minute poll must not relaunch the CLI each time")
 
-    fixture.clock.update { $0 += 11 * 60 }
+    fixture.clock.update { $0 += 3 * 60 }
     #expect(await provider.read().status == .needsAuth)
-    #expect(fixture.refreshes.get() == 2)
+    #expect(fixture.refreshes.get() == 2, "a wake without network retries within minutes")
+
+    fixture.clock.update { $0 += 3 * 60 }
+    _ = await provider.read()
+    #expect(fixture.refreshes.get() == 2, "repeated failures wait longer each time")
+
+    fixture.clock.update { $0 += 2 * 60 }
+    _ = await provider.read()
+    #expect(fixture.refreshes.get() == 3)
     #expect(fixture.tokensSent.get().isEmpty)
+}
+
+@Test
+func grokRenewalAfterAFailureRecoversAsSoonAsTheCLISavesASession() async throws {
+    let fixture = try GrokFixture()
+    try fixture.writeSession(token: "expired", expiresAt: start.addingTimeInterval(-60))
+    let offline = Box(true)
+    let renew = fixture.cliRenews()
+    let provider = fixture.provider(refresher: {
+        if offline.get() { fixture.refreshes.update { $0 += 1 } } else { renew() }
+    })
+
+    #expect(await provider.read().status == .needsAuth)
+    offline.update { $0 = false }
+    fixture.clock.update { $0 += 2 * 60 }
+
+    #expect(await provider.read().status == .live)
+    #expect(fixture.refreshes.get() == 2)
 }
 
 @Test
@@ -123,13 +149,17 @@ func grokTokenRejectedBeforeItsExpiryIsRenewedAndRetriedOnce() async throws {
 @Test
 func grokTokenStillRejectedAfterRenewalAsksForSignInWithoutLooping() async throws {
     let fixture = try GrokFixture()
-    try fixture.writeSession(token: "revoked", expiresAt: start.addingTimeInterval(3600))
+    try fixture.writeSession(token: "revoked", expiresAt: start.addingTimeInterval(5 * 3600))
 
-    let reading = await fixture.provider(refresher: fixture.cliChangesNothing()).read()
+    let provider = fixture.provider(refresher: fixture.cliChangesNothing())
 
-    #expect(reading.status == .needsAuth)
+    #expect(await provider.read().status == .needsAuth)
     #expect(fixture.refreshes.get() == 1)
     #expect(fixture.tokensSent.get() == ["revoked"], "an unchanged token is not sent again")
+
+    fixture.clock.update { $0 += 2 * 3600 }
+    #expect(await provider.read().status == .needsAuth)
+    #expect(fixture.refreshes.get() == 1, "a token Grok keeps rejecting must not relaunch the CLI all day")
 }
 
 @Test
