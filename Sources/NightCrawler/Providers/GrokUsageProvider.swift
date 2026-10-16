@@ -6,21 +6,65 @@ struct GrokUsageProvider: UsageProvider {
     let id = "grok"
     let label = "Grok"
 
-    private static let authPath = ("~/.grok/auth.json" as NSString).expandingTildeInPath
     private static let trustedIssuer = "https://auth.x.ai"
+    /// Grok access tokens last six hours; a failed renewal waits this long
+    /// before the next CLI start rather than relaunching on every poll.
+    private static let renewalRetryInterval: TimeInterval = 10 * 60
+
+    private let authPath: String
+    private let loader: QuotaHTTP.Loader
+    private let refresher: @Sendable () -> Void
+    private let now: @Sendable () -> Date
+    private let renewalGate = RenewalGate()
+
+    init(authPath: String = ("~/.grok/auth.json" as NSString).expandingTildeInPath,
+         loader: @escaping QuotaHTTP.Loader = QuotaHTTP.load,
+         refresher: @escaping @Sendable () -> Void = Self.refreshWithCLI,
+         now: @escaping @Sendable () -> Date = Date.init) {
+        self.authPath = authPath
+        self.loader = loader
+        self.refresher = refresher
+        self.now = now
+    }
 
     var isAvailable: Bool {
         loadCredentials() != nil
     }
 
     func read() async -> UsageReading {
-        guard let credentials = loadCredentials() else {
+        guard var credentials = loadCredentials() else {
             return makeReading(status: .needsAuth, error: "Run grok login to enable usage reading")
         }
-        guard !credentials.isExpired else {
-            return makeReading(status: .needsAuth, error: "Grok login expired; run grok login")
+        var renewed = false
+        if credentials.expiresAt <= now() {
+            guard await renew(credentials), let fresh = loadCredentials(), fresh.expiresAt > now() else {
+                return makeReading(status: .needsAuth, error: "Grok login expired; run grok login")
+            }
+            credentials = fresh
+            renewed = true
         }
 
+        let reading = await readUsage(with: credentials)
+        // A token can be revoked before its recorded expiry; renew once and
+        // retry only when the CLI actually saved a different one.
+        guard reading.status == .needsAuth, !renewed, await renew(credentials),
+              let fresh = loadCredentials(), fresh.accessToken != credentials.accessToken
+        else { return reading }
+        return await readUsage(with: fresh)
+    }
+
+    /// Starts the CLI at most once per retry interval and never twice at once,
+    /// since concurrent refreshes could race on a rotating refresh token.
+    private func renew(_ credentials: Credentials) async -> Bool {
+        guard credentials.canRenew,
+              renewalGate.begin(at: now(), retryInterval: Self.renewalRetryInterval)
+        else { return false }
+        await Task.detached(operation: refresher).value
+        renewalGate.end()
+        return true
+    }
+
+    private func readUsage(with credentials: Credentials) async -> UsageReading {
         var request = URLRequest(
             url: URL(string: "https://cli-chat-proxy.grok.com/v1/billing?format=credits")!,
             cachePolicy: .reloadIgnoringLocalCacheData
@@ -31,10 +75,7 @@ struct GrokUsageProvider: UsageProvider {
         request.timeoutInterval = 15
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                return makeReading(status: .error("Bad response"))
-            }
+            let (data, http) = try await loader(request)
             if http.statusCode == 401 || http.statusCode == 403 {
                 return makeReading(status: .needsAuth, error: "Grok login expired")
             }
@@ -63,7 +104,7 @@ struct GrokUsageProvider: UsageProvider {
                 source: "grok_cli_billing",
                 windows: windows,
                 status: status,
-                observedAt: Date(),
+                observedAt: now(),
                 error: nil
             )
         } catch {
@@ -72,7 +113,7 @@ struct GrokUsageProvider: UsageProvider {
     }
 
     private func loadCredentials() -> Credentials? {
-        guard let root = ProviderHelpers.readJSONObject(at: Self.authPath) else { return nil }
+        guard let root = ProviderHelpers.readJSONObject(at: authPath) else { return nil }
 
         var chosen: [String: Any]?
         for (key, value) in root {
@@ -89,14 +130,23 @@ struct GrokUsageProvider: UsageProvider {
         return Credentials(
             accessToken: token,
             expiresAt: (entry["expires_at"] as? String).flatMap(ProviderHelpers.parseISO8601)
-                ?? Date().addingTimeInterval(30 * 24 * 60 * 60),
-            email: ProviderHelpers.nonEmptyString(entry["email"])
+                ?? now().addingTimeInterval(30 * 24 * 60 * 60),
+            email: ProviderHelpers.nonEmptyString(entry["email"]),
+            canRenew: ProviderHelpers.nonEmptyString(entry["refresh_token"]) != nil
         )
     }
 
     private func isLive(_ entry: [String: Any]) -> Bool {
         guard let expires = (entry["expires_at"] as? String).flatMap(ProviderHelpers.parseISO8601) else { return true }
-        return expires > Date()
+        return expires > now()
+    }
+
+    /// Lets the Grok CLI renew its own session. Any CLI start refreshes an
+    /// expired access token from the stored refresh token, so this never reads
+    /// or sends credentials itself; the caller re-reads auth.json afterwards.
+    static func refreshWithCLI() {
+        guard let executable = RestrictedProcess.resolveOnPath("grok") else { return }
+        _ = CopilotBillingClient.run([executable, "models"], timeout: 10, maxBytes: 1_048_576)
     }
 
     static func windows(from config: [String: Any]) -> [UsageWindow] {
@@ -190,7 +240,26 @@ struct GrokUsageProvider: UsageProvider {
         let accessToken: String
         let expiresAt: Date
         let email: String?
+        let canRenew: Bool
+    }
 
-        var isExpired: Bool { expiresAt <= Date() }
+    private final class RenewalGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var running = false
+        private var lastStart: Date?
+
+        func begin(at date: Date, retryInterval: TimeInterval) -> Bool {
+            lock.withLock {
+                if running { return false }
+                if let lastStart, date.timeIntervalSince(lastStart) < retryInterval { return false }
+                running = true
+                lastStart = date
+                return true
+            }
+        }
+
+        func end() {
+            lock.withLock { running = false }
+        }
     }
 }
