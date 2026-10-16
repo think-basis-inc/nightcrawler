@@ -6,21 +6,68 @@ struct GrokUsageProvider: UsageProvider {
     let id = "grok"
     let label = "Grok"
 
-    private static let authPath = ("~/.grok/auth.json" as NSString).expandingTildeInPath
     private static let trustedIssuer = "https://auth.x.ai"
+
+    private let authPath: String
+    private let loader: QuotaHTTP.Loader
+    private let refresher: @Sendable () -> Void
+    private let now: @Sendable () -> Date
+    private let renewalGate = RenewalGate()
+
+    init(authPath: String = ("~/.grok/auth.json" as NSString).expandingTildeInPath,
+         loader: @escaping QuotaHTTP.Loader = QuotaHTTP.load,
+         refresher: @escaping @Sendable () -> Void = Self.refreshWithCLI,
+         now: @escaping @Sendable () -> Date = Date.init) {
+        self.authPath = authPath
+        self.loader = loader
+        self.refresher = refresher
+        self.now = now
+    }
 
     var isAvailable: Bool {
         loadCredentials() != nil
     }
 
     func read() async -> UsageReading {
-        guard let credentials = loadCredentials() else {
+        guard var credentials = loadCredentials() else {
             return makeReading(status: .needsAuth, error: "Run grok login to enable usage reading")
         }
-        guard !credentials.isExpired else {
-            return makeReading(status: .needsAuth, error: "Grok login expired; run grok login")
+        var renewed = false
+        // Time-based even for a token Grok rejected earlier: the CLI refreshes
+        // once a token has expired, which it may not do for a revoked one.
+        if credentials.expiresAt <= now() {
+            guard let fresh = await renew(credentials, rejected: false) else {
+                return makeReading(status: .needsAuth, error: "Grok login expired; run grok login")
+            }
+            credentials = fresh
+            renewed = true
         }
 
+        let reading = await readUsage(with: credentials)
+        // A token can be revoked before its recorded expiry; renew once per
+        // rejected token and retry only with the one the CLI saved instead.
+        guard reading.status == .needsAuth, !renewed,
+              let fresh = await renew(credentials, rejected: true)
+        else { return reading }
+        return await readUsage(with: fresh)
+    }
+
+    /// Lets the CLI renew the session and returns the new credentials, or nil
+    /// when it saved none. Never runs two CLIs at once, since concurrent
+    /// refreshes could race on a rotating refresh token.
+    private func renew(_ credentials: Credentials, rejected: Bool) async -> Credentials? {
+        guard credentials.canRenew,
+              renewalGate.begin(at: now(), rejectedToken: rejected ? credentials.accessToken : nil)
+        else { return nil }
+        await Task.detached(operation: refresher).value
+        let fresh = loadCredentials().flatMap {
+            $0.expiresAt > now() && $0.accessToken != credentials.accessToken ? $0 : nil
+        }
+        renewalGate.end(at: now(), renewed: fresh != nil)
+        return fresh
+    }
+
+    private func readUsage(with credentials: Credentials) async -> UsageReading {
         var request = URLRequest(
             url: URL(string: "https://cli-chat-proxy.grok.com/v1/billing?format=credits")!,
             cachePolicy: .reloadIgnoringLocalCacheData
@@ -31,10 +78,7 @@ struct GrokUsageProvider: UsageProvider {
         request.timeoutInterval = 15
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                return makeReading(status: .error("Bad response"))
-            }
+            let (data, http) = try await loader(request)
             if http.statusCode == 401 || http.statusCode == 403 {
                 return makeReading(status: .needsAuth, error: "Grok login expired")
             }
@@ -44,6 +88,9 @@ struct GrokUsageProvider: UsageProvider {
             guard http.statusCode == 200 else {
                 return makeReading(status: .error("Grok returned \(http.statusCode)"))
             }
+            // The session works, however it was renewed, so a later expiry
+            // starts its retries from the shortest wait.
+            renewalGate.clearFailures()
 
             guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let config = root["config"] as? [String: Any]
@@ -63,7 +110,7 @@ struct GrokUsageProvider: UsageProvider {
                 source: "grok_cli_billing",
                 windows: windows,
                 status: status,
-                observedAt: Date(),
+                observedAt: now(),
                 error: nil
             )
         } catch {
@@ -72,7 +119,7 @@ struct GrokUsageProvider: UsageProvider {
     }
 
     private func loadCredentials() -> Credentials? {
-        guard let root = ProviderHelpers.readJSONObject(at: Self.authPath) else { return nil }
+        guard let root = ProviderHelpers.readJSONObject(at: authPath) else { return nil }
 
         var chosen: [String: Any]?
         for (key, value) in root {
@@ -89,14 +136,25 @@ struct GrokUsageProvider: UsageProvider {
         return Credentials(
             accessToken: token,
             expiresAt: (entry["expires_at"] as? String).flatMap(ProviderHelpers.parseISO8601)
-                ?? Date().addingTimeInterval(30 * 24 * 60 * 60),
-            email: ProviderHelpers.nonEmptyString(entry["email"])
+                ?? now().addingTimeInterval(30 * 24 * 60 * 60),
+            email: ProviderHelpers.nonEmptyString(entry["email"]),
+            canRenew: ProviderHelpers.nonEmptyString(entry["refresh_token"]) != nil
         )
     }
 
     private func isLive(_ entry: [String: Any]) -> Bool {
         guard let expires = (entry["expires_at"] as? String).flatMap(ProviderHelpers.parseISO8601) else { return true }
-        return expires > Date()
+        return expires > now()
+    }
+
+    /// Lets the Grok CLI renew its own session. Any CLI start refreshes an
+    /// expired access token from the stored refresh token, so this never reads
+    /// or sends credentials itself; the caller re-reads auth.json afterwards.
+    /// The generous timeout avoids killing the CLI between the server rotating
+    /// the refresh token and the CLI saving it; a slow run only costs one read.
+    static func refreshWithCLI() {
+        guard let executable = RestrictedProcess.resolveOnPath("grok") else { return }
+        _ = CopilotBillingClient.run([executable, "models"], timeout: 30, maxBytes: 1_048_576)
     }
 
     static func windows(from config: [String: Any]) -> [UsageWindow] {
@@ -190,7 +248,44 @@ struct GrokUsageProvider: UsageProvider {
         let accessToken: String
         let expiresAt: Date
         let email: String?
+        let canRenew: Bool
+    }
 
-        var isExpired: Bool { expiresAt <= Date() }
+    /// One CLI renewal at a time. Failures back off from two minutes up to an
+    /// hour so a wake without network retries soon but a broken CLI does not
+    /// relaunch every poll; a token Grok rejects is renewed only once.
+    private final class RenewalGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var running = false
+        private var failures = 0
+        private var nextAttempt = Date.distantPast
+        private var lastRejectedToken: String?
+
+        func begin(at date: Date, rejectedToken: String?) -> Bool {
+            lock.withLock {
+                guard !running, date >= nextAttempt else { return false }
+                if let rejectedToken {
+                    guard rejectedToken != lastRejectedToken else { return false }
+                    lastRejectedToken = rejectedToken
+                }
+                running = true
+                return true
+            }
+        }
+
+        func clearFailures() {
+            lock.withLock {
+                failures = 0
+                nextAttempt = .distantPast
+            }
+        }
+
+        func end(at date: Date, renewed: Bool) {
+            lock.withLock {
+                running = false
+                failures = renewed ? 0 : failures + 1
+                nextAttempt = renewed ? date : date.addingTimeInterval(min(120 * pow(2, Double(failures - 1)), 3600))
+            }
+        }
     }
 }
