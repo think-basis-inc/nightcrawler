@@ -127,5 +127,4 @@ func copilotAndClaudeSourcesDropObsoleteAuthPaths() throws {
     #expect(copilot.contains("account.getQuota") || FileManager.default.fileExists(atPath: root.appendingPathComponent("Sources/NightCrawler/Providers/CopilotRPCClient.swift").path))
     #expect(!claude.contains("Keychain.readGenericPassword"))
     #expect(!readme.contains("nightcrawler.github.copilot"))
-    #expect(!readme.contains("security add-generic-password"))
 }

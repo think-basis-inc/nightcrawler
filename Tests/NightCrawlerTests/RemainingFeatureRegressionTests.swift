@@ -286,7 +286,7 @@ func capacityHTTPIsReadOnlyAndServesTheVersionedRoute() {
 }
 
 @Test
-func onlyAntigravityUsesTheKeychainDenialPath() throws {
+func onlyKeychainBackedProvidersUseTheKeychainDenialPath() throws {
     let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()
@@ -296,7 +296,7 @@ func onlyAntigravityUsesTheKeychainDenialPath() throws {
         encoding: .utf8
     )
 
-    #expect(source.contains("keychainProviderIds: Set<String> = [\"antigravity\"]"))
+    #expect(source.contains("keychainProviderIds: Set<String> = [\"antigravity\", \"cubic\"]"))
 }
 
 @Test

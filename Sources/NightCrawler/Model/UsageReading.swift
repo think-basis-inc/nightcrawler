@@ -85,7 +85,9 @@ struct UsageReading: Identifiable, Equatable, Sendable {
 
     func isFreshlyObserved(now: Date = Date()) -> Bool {
         guard status == .live, !windows.isEmpty else { return false }
-        if providerId == "cubic" {
+        // GitHub check reports are published rarely, so they stay current until
+        // their reset; the Cubic API is polled and must keep proving it.
+        if providerId == "cubic", source == "cubic_github_check" {
             return windows.contains { window in
                 window.resetsAt.map { $0 > now } ?? true
             }

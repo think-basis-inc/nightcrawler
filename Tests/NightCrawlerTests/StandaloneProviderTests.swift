@@ -134,7 +134,7 @@ func cubicIconKeepsALiveAllowanceAfterReviewsResumeWithoutANewLineCount() {
 @Test
 func cubicReadsOrgReviewsAfterTheMonthlyAllowanceResets() async throws {
     let resumeNow = ProviderHelpers.parseISO8601("2026-09-18T03:50:00Z")!
-    let provider = CubicUsageProvider(repository: { "owner/repo" }, runner: { command, timeout, limit in
+    let provider = CubicUsageProvider(repository: { "owner/repo" }, apiKey: { .missing }, runner: { command, timeout, limit in
         #expect(command.prefix(4) == ["/test/gh", "api", "--hostname", "github.com"])
         #expect(!command.contains { $0.localizedCaseInsensitiveContains("mutation") })
         #expect(timeout <= 10 && limit == 1_048_576)
@@ -170,7 +170,7 @@ func cubicReadsOrgReviewsAfterTheMonthlyAllowanceResets() async throws {
 
 @Test
 func cubicFetchesGitHubDirectlyAndNeverRunsAReview() async throws {
-    let provider = CubicUsageProvider(repository: { "owner/repo" }, runner: { command, timeout, limit in
+    let provider = CubicUsageProvider(repository: { "owner/repo" }, apiKey: { .missing }, runner: { command, timeout, limit in
         #expect(command.prefix(4) == ["/test/gh", "api", "--hostname", "github.com"])
         #expect(!command.contains { $0.localizedCaseInsensitiveContains("mutation") })
         #expect(timeout <= 10 && limit == 1_048_576)
@@ -199,6 +199,226 @@ func cubicFetchesGitHubDirectlyAndNeverRunsAReview() async throws {
     #expect(reading.source == "cubic_github_check")
     for invalid in ["", "../repo", "owner/..", "https://github.com/owner/repo", "owner/repo?x=1", "owner/repo/extra"] {
         #expect(!CubicUsageProvider.validRepository(invalid))
+    }
+}
+
+private func cubicSubscriptionFixture() -> [String: Any] { [
+    "jsonrpc": "2.0", "id": 1,
+    "result": [
+        "content": [["type": "text", "text": "{}"]],
+        "structuredContent": [
+            "provider": "stripe", "plan": "pro", "status": "active", "organization": "owner",
+            "seats": ["purchased": 1, "assigned": 1, "available": 0],
+            "reviewUsage": ["used": 51_820, "limit": 80_000, "resetsAt": "2026-11-17T05:20:42.000Z"],
+            "pendingChange": NSNull(),
+        ],
+    ],
+] }
+
+private func cubicAPIProvider(status: Int = 200, body: Any = cubicSubscriptionFixture(),
+                              key: Keychain.Lookup = .found(Data("cbk_test-key\n".utf8)),
+                              now: Date = sampleNow,
+                              onRequest: @escaping @Sendable (URLRequest) -> Void = { _ in }) -> CubicUsageProvider {
+    let data = try! JSONSerialization.data(withJSONObject: body)
+    return CubicUsageProvider(repository: { "owner/repo" }, apiKey: { key }, loader: { request in
+        onRequest(request)
+        return (data, HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+    }, runner: { _, _, _ in
+        Issue.record("a stored Cubic API key must not fall back to GitHub check reports")
+        return BillingCommandResult(exitCode: 1, stdout: Data())
+    }, executable: "/test/gh", now: { now })
+}
+
+@MainActor
+@Test
+func cubicReadsLiveReviewedLinesFromCubicWhenAnAPIKeyIsStored() async throws {
+    let reading = await cubicAPIProvider(onRequest: { request in
+        #expect(request.url?.absoluteString == "https://www.cubic.dev/api/mcp")
+        #expect(request.httpMethod == "POST")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer cbk_test-key")
+        let body = try? JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+        #expect(body?["method"] as? String == "tools/call")
+        let params = body?["params"] as? [String: Any]
+        #expect(params?["name"] as? String == "get_subscription")
+        #expect((params?["arguments"] as? [String: String]) == ["organization": "owner"])
+    }).read()
+    #expect(reading.status == .live)
+    #expect(reading.source == "cubic_api")
+    #expect(reading.error == nil)
+    #expect(reading.observedAt == sampleNow)
+    let window = try #require(reading.windows.first)
+    #expect(window.id == "reviewed_lines")
+    #expect(window.used == 51_820)
+    #expect(window.limit == 80_000)
+    #expect(abs(window.usedPercent - 64.775) < 0.0001)
+    #expect(window.resetsAt == ProviderHelpers.parseISO8601("2026-11-17T05:20:42Z"))
+    #expect(ProviderIcon.percentageText(for: reading, now: sampleNow) == "64.8%")
+}
+
+@Test
+func cubicRejectedUnreadableOrLockedAPIKeyIsACubicErrorNotAGitHubSignIn() async {
+    // The remedy is a new Cubic key, which `gh auth login` cannot provide; a
+    // sign-in watch would also resend the rejected key every few seconds.
+    var readings = [UsageReading]()
+    for status in [401, 403] {
+        readings.append(await cubicAPIProvider(status: status, body: ["error": "invalid_token"]).read())
+    }
+    for key in [Keychain.Lookup.found(Data("not-a-cubic-key".utf8)), .unavailable] {
+        readings.append(await cubicAPIProvider(key: key).read())
+    }
+    for reading in readings {
+        #expect(reading.status.isError)
+        #expect(reading.source == "cubic_api")
+        #expect(reading.windows.isEmpty)
+        #expect(!reading.isSignedOut)
+        #expect(HUDIconAction.resolve(for: reading, isInstalled: { _ in true }) == .toggleDetail)
+    }
+}
+
+private final class KeychainLookupCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var lookups: Int { lock.withLock { count } }
+    func deny() -> Keychain.Lookup { lock.withLock { count += 1 }; return .denied }
+}
+
+@MainActor
+@Test
+func cubicKeychainDenialIsNotPromptedAgainByPollingAndOffersRetry() async throws {
+    let name = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: name)!
+    defer { defaults.removePersistentDomain(forName: name) }
+    defaults.set("owner/repo", forKey: CubicUsageProvider.repositoryKey)
+    defaults.set(try JSONEncoder().encode([
+        RoutingToolState(id: "cubic", label: "Cubic", enabled: true, available: true)
+    ]), forKey: "routingToolStates")
+    let counter = KeychainLookupCounter()
+    let provider = CubicUsageProvider(repository: { "owner/repo" }, apiKey: { counter.deny() }, loader: { _ in
+        throw URLError(.badURL)
+    }, runner: { _, _, _ in
+        Issue.record("a denied Cubic key must not fall back to GitHub check reports")
+        return BillingCommandResult(exitCode: 1, stdout: Data())
+    }, executable: "/test/gh", now: { sampleNow })
+    let store = UsageStore(providers: [provider], defaults: defaults)
+    try #require(store.isProviderEnabled("cubic"))
+
+    await store.poll()
+    await store.poll()
+
+    #expect(counter.lookups == 1, "a denied Keychain prompt must not be raised again by the next poll")
+    let reading = try #require(store.readings.first { $0.providerId == "cubic" })
+    #expect(reading.source == UsageReading.keychainDeniedSource)
+    #expect(HUDIconAction.resolve(for: reading, isInstalled: { _ in true }) == .toggleDetail)
+    #expect(HUDIconAction.shouldRetry(for: reading, opensDetail: true))
+}
+
+@MainActor
+@Test(arguments: [Keychain.Lookup.found(Data("cbk_test-key".utf8)), .denied])
+func cubicKeyFailureIsNotHiddenBehindAnOlderGitHubReport(key: Keychain.Lookup) async throws {
+    // The GitHub report stays current until its reset, so a key failure must
+    // not leave its post-reset 0% on the tile as if it were still live.
+    let name = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: name)!
+    defer { defaults.removePersistentDomain(forName: name) }
+    defaults.set("owner/repo", forKey: CubicUsageProvider.repositoryKey)
+    defaults.set(try JSONEncoder().encode([
+        RoutingToolState(id: "cubic", label: "Cubic", enabled: true, available: true)
+    ]), forKey: "routingToolStates")
+    let report = CubicUsageProvider.parse([cubicCheck(summary:
+        "cubic has reviewed 0 of the 80,000 allowed lines of code this month. Reviews resume on 17 November 2099 (in 1 day).")],
+        repository: "owner/repo", now: Date())
+    try #require(report.status == .live && report.isFreshlyObserved())
+    let store = UsageStore(providers: [cubicAPIProvider(status: 401, body: ["error": "invalid_token"], key: key)],
+                           defaults: defaults)
+    store.readings = [report]
+
+    await store.poll()
+
+    let reading = try #require(store.readings.first { $0.providerId == "cubic" })
+    #expect(reading.status != .live)
+    #expect(reading.source != "cubic_github_check")
+}
+
+@MainActor
+@Test
+func restartedCubicReportKeepsItsProvenanceForFreshnessAndKeyFailures() async throws {
+    // After a restart, a recent GitHub report must still stay current until
+    // its reset without a key, and must still yield to a failing key.
+    let name = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: name)!
+    defer { defaults.removePersistentDomain(forName: name) }
+    defaults.set("owner/repo", forKey: CubicUsageProvider.repositoryKey)
+    defaults.set(try JSONEncoder().encode([
+        RoutingToolState(id: "cubic", label: "Cubic", enabled: true, available: true)
+    ]), forKey: "routingToolStates")
+    var check = cubicCheck(summary:
+        "cubic has reviewed 0 of the 80,000 allowed lines of code this month. Reviews resume on 17 November 2099 (in 1 day).")
+    check["completed_at"] = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-3600))
+    let report = CubicUsageProvider.parse([check], repository: "owner/repo", now: Date())
+    try #require(report.status == .live)
+    PersistedReadingCache.save([report], defaults: defaults)
+
+    let restored = try #require(PersistedReadingCache.load(defaults: defaults, knownProviderIds: ["cubic"]).first)
+    #expect(restored.isFreshlyObserved(), "a restored GitHub report stays current until its reset")
+
+    let store = UsageStore(providers: [cubicAPIProvider(status: 401, body: ["error": "invalid_token"])],
+                           defaults: defaults)
+    try #require(store.readings.first { $0.providerId == "cubic" }?.status == .live)
+    await store.poll()
+    let reading = try #require(store.readings.first { $0.providerId == "cubic" })
+    #expect(reading.status != .live, "a failing key must not hide behind a restored GitHub report")
+}
+
+@Test
+func readingCacheWrittenBeforeSourceProvenanceStillRestores() throws {
+    let name = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: name)!
+    defer { defaults.removePersistentDomain(forName: name) }
+    let observed = Date().addingTimeInterval(-60).timeIntervalSinceReferenceDate
+    let reset = Date().addingTimeInterval(86_400).timeIntervalSinceReferenceDate
+    // A row exactly as an earlier build stored it: no `source` key.
+    defaults.set(Data("""
+    [{"providerId":"codex","label":"Codex","observedAt":\(observed),
+      "windows":[{"id":"primary","label":"Weekly","usedPercent":19,"resetsAt":\(reset)}]}]
+    """.utf8), forKey: PersistedReadingCache.key)
+
+    let restored = PersistedReadingCache.load(defaults: defaults, knownProviderIds: ["codex"])
+    #expect(restored.map(\.providerId) == ["codex"])
+    #expect(restored.first?.source == "last_good_cache")
+    #expect(restored.first?.windows.first?.usedPercent == 19)
+}
+
+@Test
+func cubicAPIUsageGoesStaleLikeOtherPolledProvidersInsteadOfUntilReset() async throws {
+    let reading = await cubicAPIProvider().read()
+    #expect(reading.isFreshlyObserved(now: sampleNow))
+    #expect(!reading.isFreshlyObserved(now: sampleNow.addingTimeInterval(3600)),
+            "a revoked key or Cubic outage must not keep an hour-old balance live until the monthly reset")
+}
+
+@Test
+func cubicNeverReportsZeroUsageFromAMalformedOrFailedAPIResponse() async {
+    func subscription(_ usage: Any?) -> [String: Any] {
+        var content: [String: Any] = ["plan": "pro"]
+        if let usage { content["reviewUsage"] = usage }
+        return ["jsonrpc": "2.0", "id": 1, "result": ["structuredContent": content]]
+    }
+    let reset = "2026-11-17T05:20:42.000Z"
+    let bodies: [(Int, Any)] = [
+        (500, cubicSubscriptionFixture()),
+        (200, ["jsonrpc": "2.0", "id": 1, "error": ["code": -32000, "message": "nope"]]),
+        (200, ["jsonrpc": "2.0", "id": 1, "result": ["isError": true, "structuredContent": cubicSubscriptionFixture()]]),
+        (200, subscription(nil)),
+        (200, subscription(["used": 0, "limit": 0, "resetsAt": reset])),
+        (200, subscription(["used": -1, "limit": 80_000, "resetsAt": reset])),
+        (200, subscription(["used": "51820", "limit": 80_000, "resetsAt": reset])),
+        (200, subscription(["used": 0, "limit": 80_000])),
+        (200, subscription(["used": 0, "limit": 80_000, "resetsAt": "2026-09-01T00:00:00Z"])),
+    ]
+    for (status, body) in bodies {
+        let reading = await cubicAPIProvider(status: status, body: body).read()
+        #expect(reading.windows.isEmpty, "status \(status) body \(body) must not produce a usage window")
+        #expect(reading.status != .live)
     }
 }
 
@@ -268,6 +488,6 @@ func standaloneLiveProviderSmoke() async {
     #expect(devin.status == .live, "direct Devin quota must work without a Dino snapshot")
     #expect(!devin.windows.isEmpty)
     let cubic = await CubicUsageProvider(repository: { "think-basis-inc/nightcrawler" }).read()
-    #expect(cubic.source == "cubic_github_check")
-    #expect(!cubic.windows.isEmpty, "read the existing Cubic report directly; never trigger a review")
+    #expect(cubic.status == .live)
+    #expect(!cubic.windows.isEmpty, "read Cubic usage directly; never trigger a review")
 }

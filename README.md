@@ -29,7 +29,7 @@ Sources/NightCrawler/
     UsageProvider.swift      protocol
     GitHubCopilotUsageProvider.swift  Copilot CLI + GitHub billing metadata
     DevinUsageProvider.swift direct Devin account quota
-    CubicUsageProvider.swift read-only Cubic reports from GitHub checks
+    CubicUsageProvider.swift read-only Cubic usage from Cubic's API or GitHub checks
   UI/
     HUDRootView.swift        welded rail plus attached slideout
     HUDView.swift            provider rings
@@ -62,7 +62,7 @@ NightCrawler reads credentials the tools already store locally. Install and sign
 | GitHub Copilot | Copilot CLI metadata, then `gh api copilot_internal/user` (the VS Code quota snapshot, including Business `credits_used`), then premium-request billing |
 | Grok | `~/.grok/auth.json` |
 | Devin | Direct account-quota request using the existing Devin CLI login (`~/.local/share/devin/credentials.toml`, or XDG data home) |
-| Cubic | Direct read-only GitHub check lookup using `gh` authentication; configure owner/repository in Settings. Last reported allowance, not a live balance. After a monthly reset, shows 0% until Cubic publishes a new line count. No review is triggered. |
+| Cubic | Live reviewed-line usage from Cubic's read-only `get_subscription` MCP tool, for the organization that owns the owner/repository set in Settings. Store a personal API key (Cubic → Settings → API, CLI & MCP) in a Terminal with `security add-generic-password -U -s ai.thinkbasis.nightcrawler.cubic -a api-key -w`, then allow NightCrawler's Keychain prompt. Without a key it falls back to the last allowance Cubic published in GitHub checks via `gh`, which is not a live balance: after a monthly reset it shows 0% once Cubic completes a review without publishing a new line count, and no balance before that. No review is triggered. |
 | OpenCode | `~/.local/share/opencode/auth.json` |
 | Antigravity | `gemini` / `antigravity` Keychain item |
 | ZCode / GLM | `~/.claude/settings.json`, `~/.zcode/v2/config.json`, or `~/.local/share/opencode/auth.json` |
