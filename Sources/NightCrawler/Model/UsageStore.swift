@@ -28,7 +28,7 @@ final class UsageStore: ObservableObject {
     private var queuedPoll = false
     private var demoReadings: [UsageReading]?
     private var deniedProviderIds: Set<String> = []
-    private var keychainProviderIds: Set<String> = ["antigravity"]
+    private var keychainProviderIds: Set<String> = ["antigravity", "cubic"]
     private var signInWatches: [String: (token: UUID, task: Task<Void, Never>)] = [:]
 
     private static let enabledDefaultsKey = "enabledProviderIds"

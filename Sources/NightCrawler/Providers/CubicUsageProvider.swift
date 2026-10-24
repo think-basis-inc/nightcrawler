@@ -41,13 +41,15 @@ struct CubicUsageProvider: UsageProvider {
         switch await Task.detached(operation: apiKey).value {
         case .found(let data):
             guard let key = Self.credential(from: data) else {
-                return Self.empty("Stored Cubic API key is not a cubic personal or organization key", status: .needsAuth)
+                return Self.apiFailure("Stored Cubic API key is not a cubic personal or organization key")
             }
             return await readSubscription(key: key, organization: String(repo.split(separator: "/")[0]))
         case .denied:
-            return Self.empty("Allow NightCrawler to read the Cubic API key in Keychain", status: .needsAuth)
+            return UsageReading(providerId: "cubic", label: "Cubic", accountId: nil, authMode: "api_key",
+                source: UsageReading.keychainDeniedSource, windows: [], status: .needsAuth, observedAt: nil,
+                error: "Keychain access was denied; select to retry")
         case .unavailable:
-            return Self.empty("Keychain is locked; Cubic usage will retry")
+            return Self.apiFailure("Keychain is locked; will retry")
         case .missing:
             return await Task.detached { query() }.value
         }
@@ -77,19 +79,24 @@ struct CubicUsageProvider: UsageProvider {
         do {
             let (body, response) = try await loader(request)
             if [401, 403].contains(response.statusCode) {
-                return Self.empty("Cubic rejected the stored API key; generate a new one in Cubic settings", status: .needsAuth)
+                return Self.apiFailure("Cubic rejected the stored API key; generate a new one in Cubic settings")
             }
-            guard response.statusCode == 200 else {
-                return Self.empty("Cubic usage request failed", status: .error("Cubic usage request failed"))
-            }
+            guard response.statusCode == 200 else { return Self.apiFailure("Cubic usage request failed") }
             return Self.parseSubscription(body, organization: organization, now: now())
         } catch {
-            return Self.empty("Cubic usage request failed or timed out", status: .error("Cubic usage unavailable"))
+            return Self.apiFailure("Cubic usage request failed or timed out")
         }
     }
 
+    // A bad key is fixed in Cubic's settings, not by `gh auth login`, so key
+    // problems are errors rather than a sign-out that would launch the wrong remedy.
+    private static func apiFailure(_ message: String) -> UsageReading {
+        UsageReading(providerId: "cubic", label: "Cubic", accountId: nil, authMode: "api_key",
+            source: "cubic_api", windows: [], status: .error(message), observedAt: nil, error: message)
+    }
+
     static func parseSubscription(_ body: Data, organization: String, now: Date) -> UsageReading {
-        let invalid = empty("Cubic did not report reviewed-line usage", status: .error("Cubic usage unavailable"))
+        let invalid = apiFailure("Cubic did not report reviewed-line usage")
         guard let root = try? JSONSerialization.jsonObject(with: body) as? [String: Any], root["error"] == nil,
               let result = root["result"] as? [String: Any], result["isError"] as? Bool != true,
               let usage = (result["structuredContent"] as? [String: Any])?["reviewUsage"] as? [String: Any],

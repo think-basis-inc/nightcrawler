@@ -92,7 +92,7 @@ struct SettingsView: View {
             }
             .frame(height: HUDLayout.edgePickerHeight)
             .padding(.top, HUDLayout.headerToBlock)
-            .help("Reads Cubic's latest GitHub check report. Never requests a review.")
+            .help("Organization for Cubic usage: read live with the Cubic API key in Keychain, otherwise from its latest GitHub check report. Never requests a review.")
 
             if !store.routingToolStates.isEmpty {
                 Text("Agent availability")

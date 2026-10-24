@@ -296,7 +296,7 @@ func onlyAntigravityUsesTheKeychainDenialPath() throws {
         encoding: .utf8
     )
 
-    #expect(source.contains("keychainProviderIds: Set<String> = [\"antigravity\"]"))
+    #expect(source.contains("keychainProviderIds: Set<String> = [\"antigravity\", \"cubic\"]"))
 }
 
 @Test

@@ -256,17 +256,68 @@ func cubicReadsLiveReviewedLinesFromCubicWhenAnAPIKeyIsStored() async throws {
 }
 
 @Test
-func cubicRejectedOrUnreadableAPIKeyAsksForSignInInsteadOfShowingUsage() async {
+func cubicRejectedUnreadableOrLockedAPIKeyIsACubicErrorNotAGitHubSignIn() async {
+    // The remedy is a new Cubic key, which `gh auth login` cannot provide; a
+    // sign-in watch would also resend the rejected key every few seconds.
+    var readings = [UsageReading]()
     for status in [401, 403] {
-        let reading = await cubicAPIProvider(status: status, body: ["error": "invalid_token"]).read()
-        #expect(reading.status == .needsAuth)
-        #expect(reading.windows.isEmpty)
+        readings.append(await cubicAPIProvider(status: status, body: ["error": "invalid_token"]).read())
     }
-    for key in [Keychain.Lookup.denied, .found(Data("not-a-cubic-key".utf8))] {
-        let reading = await cubicAPIProvider(key: key).read()
-        #expect(reading.status == .needsAuth)
-        #expect(reading.windows.isEmpty)
+    for key in [Keychain.Lookup.found(Data("not-a-cubic-key".utf8)), .unavailable] {
+        readings.append(await cubicAPIProvider(key: key).read())
     }
+    for reading in readings {
+        #expect(reading.status.isError)
+        #expect(reading.source == "cubic_api")
+        #expect(reading.windows.isEmpty)
+        #expect(!reading.isSignedOut)
+        #expect(HUDIconAction.resolve(for: reading, isInstalled: { _ in true }) == .toggleDetail)
+    }
+}
+
+private final class KeychainLookupCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var lookups: Int { lock.withLock { count } }
+    func deny() -> Keychain.Lookup { lock.withLock { count += 1 }; return .denied }
+}
+
+@MainActor
+@Test
+func cubicKeychainDenialIsNotPromptedAgainByPollingAndOffersRetry() async throws {
+    let name = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: name)!
+    defer { defaults.removePersistentDomain(forName: name) }
+    defaults.set("owner/repo", forKey: CubicUsageProvider.repositoryKey)
+    defaults.set(try JSONEncoder().encode([
+        RoutingToolState(id: "cubic", label: "Cubic", enabled: true, available: true)
+    ]), forKey: "routingToolStates")
+    let counter = KeychainLookupCounter()
+    let provider = CubicUsageProvider(repository: { "owner/repo" }, apiKey: { counter.deny() }, loader: { _ in
+        throw URLError(.badURL)
+    }, runner: { _, _, _ in
+        Issue.record("a denied Cubic key must not fall back to GitHub check reports")
+        return BillingCommandResult(exitCode: 1, stdout: Data())
+    }, executable: "/test/gh", now: { sampleNow })
+    let store = UsageStore(providers: [provider], defaults: defaults)
+    try #require(store.isProviderEnabled("cubic"))
+
+    await store.poll()
+    await store.poll()
+
+    #expect(counter.lookups == 1, "a denied Keychain prompt must not be raised again by the next poll")
+    let reading = try #require(store.readings.first { $0.providerId == "cubic" })
+    #expect(reading.source == UsageReading.keychainDeniedSource)
+    #expect(HUDIconAction.resolve(for: reading, isInstalled: { _ in true }) == .toggleDetail)
+    #expect(HUDIconAction.shouldRetry(for: reading, opensDetail: true))
+}
+
+@Test
+func cubicAPIUsageGoesStaleLikeOtherPolledProvidersInsteadOfUntilReset() async throws {
+    let reading = await cubicAPIProvider().read()
+    #expect(reading.isFreshlyObserved(now: sampleNow))
+    #expect(!reading.isFreshlyObserved(now: sampleNow.addingTimeInterval(3600)),
+            "a revoked key or Cubic outage must not keep an hour-old balance live until the monthly reset")
 }
 
 @Test
