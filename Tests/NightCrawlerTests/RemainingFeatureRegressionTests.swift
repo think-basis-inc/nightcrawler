@@ -286,7 +286,7 @@ func capacityHTTPIsReadOnlyAndServesTheVersionedRoute() {
 }
 
 @Test
-func onlyAntigravityUsesTheKeychainDenialPath() throws {
+func onlyKeychainBackedProvidersUseTheKeychainDenialPath() throws {
     let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()
