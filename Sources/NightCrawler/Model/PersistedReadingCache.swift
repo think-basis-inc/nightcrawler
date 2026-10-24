@@ -42,7 +42,7 @@ enum PersistedReadingCache {
                 label: row.label,
                 accountId: nil,
                 authMode: "unknown",
-                source: "last_good_cache",
+                source: row.source == Self.cubicReportSource ? Self.cubicReportSource : "last_good_cache",
                 windows: windows,
                 status: .live,
                 observedAt: row.observedAt,
@@ -60,6 +60,7 @@ enum PersistedReadingCache {
             return Row(
                 providerId: reading.providerId,
                 label: reading.label,
+                source: reading.source == Self.cubicReportSource ? reading.source : nil,
                 observedAt: observedAt,
                 windows: reading.windows.map {
                     Window(
@@ -77,9 +78,14 @@ enum PersistedReadingCache {
         defaults.set(data, forKey: key)
     }
 
+    // Cubic's GitHub report stays current until its reset and must still yield
+    // to a failing API key, so it keeps its provenance across a restart.
+    private static let cubicReportSource = "cubic_github_check"
+
     private struct Row: Codable {
         let providerId: String
         let label: String
+        let source: String?
         let observedAt: Date
         let windows: [Window]
     }

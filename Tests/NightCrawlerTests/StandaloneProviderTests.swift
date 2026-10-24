@@ -339,6 +339,36 @@ func cubicKeyFailureIsNotHiddenBehindAnOlderGitHubReport(key: Keychain.Lookup) a
     #expect(reading.source != "cubic_github_check")
 }
 
+@MainActor
+@Test
+func restartedCubicReportKeepsItsProvenanceForFreshnessAndKeyFailures() async throws {
+    // After a restart, a recent GitHub report must still stay current until
+    // its reset without a key, and must still yield to a failing key.
+    let name = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: name)!
+    defer { defaults.removePersistentDomain(forName: name) }
+    defaults.set("owner/repo", forKey: CubicUsageProvider.repositoryKey)
+    defaults.set(try JSONEncoder().encode([
+        RoutingToolState(id: "cubic", label: "Cubic", enabled: true, available: true)
+    ]), forKey: "routingToolStates")
+    var check = cubicCheck(summary:
+        "cubic has reviewed 0 of the 80,000 allowed lines of code this month. Reviews resume on 17 November 2099 (in 1 day).")
+    check["completed_at"] = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-3600))
+    let report = CubicUsageProvider.parse([check], repository: "owner/repo", now: Date())
+    try #require(report.status == .live)
+    PersistedReadingCache.save([report], defaults: defaults)
+
+    let restored = try #require(PersistedReadingCache.load(defaults: defaults, knownProviderIds: ["cubic"]).first)
+    #expect(restored.isFreshlyObserved(), "a restored GitHub report stays current until its reset")
+
+    let store = UsageStore(providers: [cubicAPIProvider(status: 401, body: ["error": "invalid_token"])],
+                           defaults: defaults)
+    try #require(store.readings.first { $0.providerId == "cubic" }?.status == .live)
+    await store.poll()
+    let reading = try #require(store.readings.first { $0.providerId == "cubic" })
+    #expect(reading.status != .live, "a failing key must not hide behind a restored GitHub report")
+}
+
 @Test
 func cubicAPIUsageGoesStaleLikeOtherPolledProvidersInsteadOfUntilReset() async throws {
     let reading = await cubicAPIProvider().read()
