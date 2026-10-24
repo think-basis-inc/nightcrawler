@@ -312,6 +312,33 @@ func cubicKeychainDenialIsNotPromptedAgainByPollingAndOffersRetry() async throws
     #expect(HUDIconAction.shouldRetry(for: reading, opensDetail: true))
 }
 
+@MainActor
+@Test(arguments: [Keychain.Lookup.found(Data("cbk_test-key".utf8)), .denied])
+func cubicKeyFailureIsNotHiddenBehindAnOlderGitHubReport(key: Keychain.Lookup) async throws {
+    // The GitHub report stays current until its reset, so a key failure must
+    // not leave its post-reset 0% on the tile as if it were still live.
+    let name = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: name)!
+    defer { defaults.removePersistentDomain(forName: name) }
+    defaults.set("owner/repo", forKey: CubicUsageProvider.repositoryKey)
+    defaults.set(try JSONEncoder().encode([
+        RoutingToolState(id: "cubic", label: "Cubic", enabled: true, available: true)
+    ]), forKey: "routingToolStates")
+    let report = CubicUsageProvider.parse([cubicCheck(summary:
+        "cubic has reviewed 0 of the 80,000 allowed lines of code this month. Reviews resume on 17 November 2099 (in 1 day).")],
+        repository: "owner/repo", now: Date())
+    try #require(report.status == .live && report.isFreshlyObserved())
+    let store = UsageStore(providers: [cubicAPIProvider(status: 401, body: ["error": "invalid_token"], key: key)],
+                           defaults: defaults)
+    store.readings = [report]
+
+    await store.poll()
+
+    let reading = try #require(store.readings.first { $0.providerId == "cubic" })
+    #expect(reading.status != .live)
+    #expect(reading.source != "cubic_github_check")
+}
+
 @Test
 func cubicAPIUsageGoesStaleLikeOtherPolledProvidersInsteadOfUntilReset() async throws {
     let reading = await cubicAPIProvider().read()

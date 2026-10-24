@@ -378,12 +378,16 @@ final class UsageStore: ObservableObject {
             if Self.isTransientRefreshFailure(reading.status),
                previous.status == .live,
                !previous.windows.isEmpty {
-                let remainsLive = previous.isFreshlyObserved()
+                // A GitHub check report stays current until its reset; a failing
+                // Cubic API key must not hide behind it as live usage.
+                let keyFailureOverReport = previous.source == "cubic_github_check"
+                    && ["cubic_api", UsageReading.keychainDeniedSource].contains(reading.source)
+                let remainsLive = previous.isFreshlyObserved() && !keyFailureOverReport
                 // The denial label describes only the latest read: keep it
                 // behind cached usage so a click can retry, and drop it as soon
                 // as a later read says something else (such as an expired login).
                 let denied = UsageReading.keychainDeniedSource
-                let source = reading.source == denied || previous.source == denied
+                let source = reading.source == denied || previous.source == denied || keyFailureOverReport
                     ? reading.source
                     : previous.source
                 readings[index] = UsageReading(
