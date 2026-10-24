@@ -1,21 +1,31 @@
 import Foundation
 
-/// Reads Cubic's published GitHub check report. Does not launch Cubic or request a review.
+/// Reads Cubic's live reviewed-line usage with a personal API key from the Keychain,
+/// falling back to Cubic's published GitHub check report. Does not launch Cubic or request a review.
 struct CubicUsageProvider: UsageProvider {
     let id = "cubic"
     let label = "Cubic"
     static let repositoryKey = "cubicUsageRepository"
+    static let keychainService = "ai.thinkbasis.nightcrawler.cubic"
+    static let keychainAccount = "api-key"
     private let repository: @Sendable () -> String
+    private let apiKey: @Sendable () -> Keychain.Lookup
+    private let loader: QuotaHTTP.Loader
     private let runner: CopilotBillingClient.Runner
     private let executable: String?
     private let now: @Sendable () -> Date
 
     init(repository: @escaping @Sendable () -> String = {
         UserDefaults.standard.string(forKey: Self.repositoryKey) ?? ""
-    }, runner: @escaping CopilotBillingClient.Runner = CopilotBillingClient.run,
+    }, apiKey: @escaping @Sendable () -> Keychain.Lookup = {
+        Keychain.lookupPasswordData(service: Self.keychainService, account: Self.keychainAccount)
+    }, loader: @escaping QuotaHTTP.Loader = QuotaHTTP.load,
+         runner: @escaping CopilotBillingClient.Runner = CopilotBillingClient.run,
          executable: String? = RestrictedProcess.resolveOnPath("gh"),
          now: @escaping @Sendable () -> Date = { Date() }) {
         self.repository = repository
+        self.apiKey = apiKey
+        self.loader = loader
         self.runner = runner
         self.executable = executable
         self.now = now
@@ -24,7 +34,81 @@ struct CubicUsageProvider: UsageProvider {
     var isAvailable: Bool { executable != nil }
 
     func read() async -> UsageReading {
-        await Task.detached { query() }.value
+        let repo = repository()
+        guard Self.validRepository(repo) else {
+            return Self.empty("Choose a Cubic GitHub repository in Settings")
+        }
+        switch await Task.detached(operation: apiKey).value {
+        case .found(let data):
+            guard let key = Self.credential(from: data) else {
+                return Self.empty("Stored Cubic API key is not a cubic personal or organization key", status: .needsAuth)
+            }
+            return await readSubscription(key: key, organization: String(repo.split(separator: "/")[0]))
+        case .denied:
+            return Self.empty("Allow NightCrawler to read the Cubic API key in Keychain", status: .needsAuth)
+        case .unavailable:
+            return Self.empty("Keychain is locked; Cubic usage will retry")
+        case .missing:
+            return await Task.detached { query() }.value
+        }
+    }
+
+    // Personal (cbk_) or organization (cok_) keys only; never log or echo the value.
+    static func credential(from data: Data) -> String? {
+        guard data.count <= 4_096, let text = String(data: data, encoding: .utf8) else { return nil }
+        let key = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard key.hasPrefix("cbk_") || key.hasPrefix("cok_"), (8...1_024).contains(key.utf8.count),
+              key.utf8.allSatisfy({ (33...126).contains($0) }) else { return nil }
+        return key
+    }
+
+    /// One stateless, read-only MCP `tools/call` of `get_subscription`.
+    private func readSubscription(key: String, organization: String) async -> UsageReading {
+        var request = URLRequest(url: URL(string: "https://www.cubic.dev/api/mcp")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": ["name": "get_subscription", "arguments": ["organization": organization]],
+        ])
+        do {
+            let (body, response) = try await loader(request)
+            if [401, 403].contains(response.statusCode) {
+                return Self.empty("Cubic rejected the stored API key; generate a new one in Cubic settings", status: .needsAuth)
+            }
+            guard response.statusCode == 200 else {
+                return Self.empty("Cubic usage request failed", status: .error("Cubic usage request failed"))
+            }
+            return Self.parseSubscription(body, organization: organization, now: now())
+        } catch {
+            return Self.empty("Cubic usage request failed or timed out", status: .error("Cubic usage unavailable"))
+        }
+    }
+
+    static func parseSubscription(_ body: Data, organization: String, now: Date) -> UsageReading {
+        let invalid = empty("Cubic did not report reviewed-line usage", status: .error("Cubic usage unavailable"))
+        guard let root = try? JSONSerialization.jsonObject(with: body) as? [String: Any], root["error"] == nil,
+              let result = root["result"] as? [String: Any], result["isError"] as? Bool != true,
+              let usage = (result["structuredContent"] as? [String: Any])?["reviewUsage"] as? [String: Any],
+              let used = lineCount(usage["used"]), used >= 0,
+              let limit = lineCount(usage["limit"]), limit > 0,
+              Double(used) / Double(limit) <= 10,
+              let reset = ProviderHelpers.parseISO8601(usage["resetsAt"] as? String), reset > now
+        else { return invalid }
+        return UsageReading(
+            providerId: "cubic", label: "Cubic",
+            accountId: ProviderHelpers.sha256Prefix(organization.lowercased()),
+            authMode: "api_key", source: "cubic_api",
+            windows: [UsageWindow(
+                id: "reviewed_lines", label: "Reviewed lines",
+                used: used, limit: limit, usedPercent: Double(used) / Double(limit) * 100,
+                windowMinutes: nil, resetsAt: reset
+            )],
+            status: .live, observedAt: now, error: nil
+        )
     }
 
     static func validRepository(_ value: String) -> Bool {
@@ -36,9 +120,6 @@ struct CubicUsageProvider: UsageProvider {
 
     private func query() -> UsageReading {
         let repo = repository()
-        guard Self.validRepository(repo) else {
-            return Self.empty("Choose a Cubic GitHub repository in Settings")
-        }
         guard let executable else { return Self.empty("Sign in to GitHub CLI to read Cubic reports", status: .needsAuth) }
         let owner = String(repo.split(separator: "/").first ?? "")
         let deadline = Date().addingTimeInterval(25)
@@ -210,6 +291,13 @@ struct CubicUsageProvider: UsageProvider {
             }
         }
         return checks
+    }
+
+    private static func lineCount(_ value: Any?) -> Int? {
+        // JSONSerialization decodes true/false as NSNumber too; reject them by type, not by `is Bool`.
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.rounded() == number.doubleValue, abs(number.doubleValue) < 1e12 else { return nil }
+        return number.intValue
     }
 
     private static func int(_ value: Any?) -> Int? {

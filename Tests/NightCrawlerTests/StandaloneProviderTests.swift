@@ -134,7 +134,7 @@ func cubicIconKeepsALiveAllowanceAfterReviewsResumeWithoutANewLineCount() {
 @Test
 func cubicReadsOrgReviewsAfterTheMonthlyAllowanceResets() async throws {
     let resumeNow = ProviderHelpers.parseISO8601("2026-09-18T03:50:00Z")!
-    let provider = CubicUsageProvider(repository: { "owner/repo" }, runner: { command, timeout, limit in
+    let provider = CubicUsageProvider(repository: { "owner/repo" }, apiKey: { .missing }, runner: { command, timeout, limit in
         #expect(command.prefix(4) == ["/test/gh", "api", "--hostname", "github.com"])
         #expect(!command.contains { $0.localizedCaseInsensitiveContains("mutation") })
         #expect(timeout <= 10 && limit == 1_048_576)
@@ -170,7 +170,7 @@ func cubicReadsOrgReviewsAfterTheMonthlyAllowanceResets() async throws {
 
 @Test
 func cubicFetchesGitHubDirectlyAndNeverRunsAReview() async throws {
-    let provider = CubicUsageProvider(repository: { "owner/repo" }, runner: { command, timeout, limit in
+    let provider = CubicUsageProvider(repository: { "owner/repo" }, apiKey: { .missing }, runner: { command, timeout, limit in
         #expect(command.prefix(4) == ["/test/gh", "api", "--hostname", "github.com"])
         #expect(!command.contains { $0.localizedCaseInsensitiveContains("mutation") })
         #expect(timeout <= 10 && limit == 1_048_576)
@@ -199,6 +199,99 @@ func cubicFetchesGitHubDirectlyAndNeverRunsAReview() async throws {
     #expect(reading.source == "cubic_github_check")
     for invalid in ["", "../repo", "owner/..", "https://github.com/owner/repo", "owner/repo?x=1", "owner/repo/extra"] {
         #expect(!CubicUsageProvider.validRepository(invalid))
+    }
+}
+
+private func cubicSubscriptionFixture() -> [String: Any] { [
+    "jsonrpc": "2.0", "id": 1,
+    "result": [
+        "content": [["type": "text", "text": "{}"]],
+        "structuredContent": [
+            "provider": "stripe", "plan": "pro", "status": "active", "organization": "owner",
+            "seats": ["purchased": 1, "assigned": 1, "available": 0],
+            "reviewUsage": ["used": 51_820, "limit": 80_000, "resetsAt": "2026-11-17T05:20:42.000Z"],
+            "pendingChange": NSNull(),
+        ],
+    ],
+] }
+
+private func cubicAPIProvider(status: Int = 200, body: Any = cubicSubscriptionFixture(),
+                              key: Keychain.Lookup = .found(Data("cbk_test-key\n".utf8)),
+                              now: Date = sampleNow,
+                              onRequest: @escaping @Sendable (URLRequest) -> Void = { _ in }) -> CubicUsageProvider {
+    let data = try! JSONSerialization.data(withJSONObject: body)
+    return CubicUsageProvider(repository: { "owner/repo" }, apiKey: { key }, loader: { request in
+        onRequest(request)
+        return (data, HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+    }, runner: { _, _, _ in
+        Issue.record("a stored Cubic API key must not fall back to GitHub check reports")
+        return BillingCommandResult(exitCode: 1, stdout: Data())
+    }, executable: "/test/gh", now: { now })
+}
+
+@MainActor
+@Test
+func cubicReadsLiveReviewedLinesFromCubicWhenAnAPIKeyIsStored() async throws {
+    let reading = await cubicAPIProvider(onRequest: { request in
+        #expect(request.url?.absoluteString == "https://www.cubic.dev/api/mcp")
+        #expect(request.httpMethod == "POST")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer cbk_test-key")
+        let body = try? JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+        #expect(body?["method"] as? String == "tools/call")
+        let params = body?["params"] as? [String: Any]
+        #expect(params?["name"] as? String == "get_subscription")
+        #expect((params?["arguments"] as? [String: String]) == ["organization": "owner"])
+    }).read()
+    #expect(reading.status == .live)
+    #expect(reading.source == "cubic_api")
+    #expect(reading.error == nil)
+    #expect(reading.observedAt == sampleNow)
+    let window = try #require(reading.windows.first)
+    #expect(window.id == "reviewed_lines")
+    #expect(window.used == 51_820)
+    #expect(window.limit == 80_000)
+    #expect(abs(window.usedPercent - 64.775) < 0.0001)
+    #expect(window.resetsAt == ProviderHelpers.parseISO8601("2026-11-17T05:20:42Z"))
+    #expect(ProviderIcon.percentageText(for: reading, now: sampleNow) == "64.8%")
+}
+
+@Test
+func cubicRejectedOrUnreadableAPIKeyAsksForSignInInsteadOfShowingUsage() async {
+    for status in [401, 403] {
+        let reading = await cubicAPIProvider(status: status, body: ["error": "invalid_token"]).read()
+        #expect(reading.status == .needsAuth)
+        #expect(reading.windows.isEmpty)
+    }
+    for key in [Keychain.Lookup.denied, .found(Data("not-a-cubic-key".utf8))] {
+        let reading = await cubicAPIProvider(key: key).read()
+        #expect(reading.status == .needsAuth)
+        #expect(reading.windows.isEmpty)
+    }
+}
+
+@Test
+func cubicNeverReportsZeroUsageFromAMalformedOrFailedAPIResponse() async {
+    func subscription(_ usage: Any?) -> [String: Any] {
+        var content: [String: Any] = ["plan": "pro"]
+        if let usage { content["reviewUsage"] = usage }
+        return ["jsonrpc": "2.0", "id": 1, "result": ["structuredContent": content]]
+    }
+    let reset = "2026-11-17T05:20:42.000Z"
+    let bodies: [(Int, Any)] = [
+        (500, cubicSubscriptionFixture()),
+        (200, ["jsonrpc": "2.0", "id": 1, "error": ["code": -32000, "message": "nope"]]),
+        (200, ["jsonrpc": "2.0", "id": 1, "result": ["isError": true, "structuredContent": cubicSubscriptionFixture()]]),
+        (200, subscription(nil)),
+        (200, subscription(["used": 0, "limit": 0, "resetsAt": reset])),
+        (200, subscription(["used": -1, "limit": 80_000, "resetsAt": reset])),
+        (200, subscription(["used": "51820", "limit": 80_000, "resetsAt": reset])),
+        (200, subscription(["used": 0, "limit": 80_000])),
+        (200, subscription(["used": 0, "limit": 80_000, "resetsAt": "2026-09-01T00:00:00Z"])),
+    ]
+    for (status, body) in bodies {
+        let reading = await cubicAPIProvider(status: status, body: body).read()
+        #expect(reading.windows.isEmpty, "status \(status) body \(body) must not produce a usage window")
+        #expect(reading.status != .live)
     }
 }
 
@@ -268,6 +361,6 @@ func standaloneLiveProviderSmoke() async {
     #expect(devin.status == .live, "direct Devin quota must work without a Dino snapshot")
     #expect(!devin.windows.isEmpty)
     let cubic = await CubicUsageProvider(repository: { "think-basis-inc/nightcrawler" }).read()
-    #expect(cubic.source == "cubic_github_check")
-    #expect(!cubic.windows.isEmpty, "read the existing Cubic report directly; never trigger a review")
+    #expect(cubic.status == .live)
+    #expect(!cubic.windows.isEmpty, "read Cubic usage directly; never trigger a review")
 }
