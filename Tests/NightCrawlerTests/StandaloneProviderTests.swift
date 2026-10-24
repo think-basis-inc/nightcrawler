@@ -370,6 +370,25 @@ func restartedCubicReportKeepsItsProvenanceForFreshnessAndKeyFailures() async th
 }
 
 @Test
+func readingCacheWrittenBeforeSourceProvenanceStillRestores() throws {
+    let name = "NightCrawlerTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: name)!
+    defer { defaults.removePersistentDomain(forName: name) }
+    let observed = Date().addingTimeInterval(-60).timeIntervalSinceReferenceDate
+    let reset = Date().addingTimeInterval(86_400).timeIntervalSinceReferenceDate
+    // A row exactly as an earlier build stored it: no `source` key.
+    defaults.set(Data("""
+    [{"providerId":"codex","label":"Codex","observedAt":\(observed),
+      "windows":[{"id":"primary","label":"Weekly","usedPercent":19,"resetsAt":\(reset)}]}]
+    """.utf8), forKey: PersistedReadingCache.key)
+
+    let restored = PersistedReadingCache.load(defaults: defaults, knownProviderIds: ["codex"])
+    #expect(restored.map(\.providerId) == ["codex"])
+    #expect(restored.first?.source == "last_good_cache")
+    #expect(restored.first?.windows.first?.usedPercent == 19)
+}
+
+@Test
 func cubicAPIUsageGoesStaleLikeOtherPolledProvidersInsteadOfUntilReset() async throws {
     let reading = await cubicAPIProvider().read()
     #expect(reading.isFreshlyObserved(now: sampleNow))
